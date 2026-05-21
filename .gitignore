@@ -1,0 +1,22 @@
+# Build artifacts
+sourcemap.json
+
+# Wally build artifacts — run `wally install` to regenerate.
+# Remove Packages/ and src/Server/Server/Packages/ to commit packages for offline-first setups.
+# NOTE: `wally install` writes server packages to repo-root `ServerPackages/`; move them
+# into `src/Server/Server/Packages/` after install (see wally.toml for the command).
+Packages/
+ServerPackages/
+src/Server/Server/Packages/
+wally.lock
+
+# Argon
+.argon/
+
+# Roblox lock files
+*.rbxl.lock
+*.rbxlx.lock
+
+# OS
+.DS_Store
+Thumbs.db

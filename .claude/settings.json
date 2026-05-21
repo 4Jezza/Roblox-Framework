@@ -1,0 +1,47 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wally install*)",
+      "Bash(wally update*)",
+      "Bash(argon serve*)",
+      "Bash(argon sourcemap*)",
+      "Bash(stylua*)",
+      "Bash(selene*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'REMINDER: Assets (StarterGui, Workspace, ReplicatedStorage.Assets, ServerStorage.Assets) live in-Studio and are discovered via Roblox MCP (search_game_tree / inspect_instance). Scripts stay on Argon. Consult filestructure/*.md before UI/VFX/sound/workspace work; refresh it after MCP reveals new instances. Protocol: .claude/reference/asset-discovery.md.'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__Roblox_Studio__search_game_tree|mcp__Roblox_Studio__inspect_instance",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'REMINDER: If that MCP call revealed new or changed instances, refresh the matching filestructure/*.md and bump filestructure/last-updated.json.'"
+          }
+        ]
+      }
+    ]
+  }
+}

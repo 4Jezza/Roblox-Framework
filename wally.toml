@@ -1,0 +1,57 @@
+[package]
+name = "your-org/boilerplate"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+license = "MIT"
+
+# After `wally install`, shared packages land in the repo-root `Packages/` directory
+# (mounted as `ReplicatedStorage.Packages`). Server packages land in repo-root
+# `ServerPackages/` but MUST be moved into `src/Server/Server/Packages/` (which
+# mounts as `ServerScriptService.Server.Packages` via `default.project.json`'s
+# $path: "src/Server").
+#
+# Post-install move command:
+#   mv ServerPackages/* src/Server/Server/Packages/ && rmdir ServerPackages
+
+[dependencies]
+Knit              = "sleitnick/knit@1.5.1"
+BridgeNet2        = "ffrostflame/bridgenet2@1.0.0"
+Janitor           = "howmanysmall/janitor@1.18.3"
+Signal            = "sleitnick/signal@2.0.0"
+Sift              = "csqrl/sift@0.0.10"
+ZonePlus          = "mattschrubb/zoneplus@3.2.0"
+EZVisualz         = "arxkdev/ezvisualz@0.0.6"
+ExpressivePrompts = "miagobble/expressive-prompts@1.0.0"
+TopbarPlus        = "1foreverhd/topbarplus@3.4.0"
+
+# Mad Studio Replica is VENDORED, not installed via Wally — the library is not
+# published to the Wally index. The source lives at:
+#   src/Shared/ReplicaShared/       shared utility modules (Maid, Remote, Signal, RateLimit)
+#   src/Shared/ReplicaClient.luau   client-side Replica module
+#   src/Server/ReplicaServer.luau   server-side Replica module
+# DataService.luau wraps this library to expose a stable public API surface.
+
+# UIAnimator (Twinkle) is the boilerplate's preferred UI animation library and is
+# VENDORED at src/Client/Client/Packages/UIAnimator/ — it is not on the Wally
+# registry. UIAnimator uses Trove internally as its cleanup container.
+Trove             = "sleitnick/trove@1.8.0"
+
+# RbxUtil — individual packages from the sleitnick/RbxUtil monorepo
+TableUtil  = "sleitnick/table-util@1.2.1"
+Option     = "sleitnick/option@1.0.5"
+EnumList   = "sleitnick/enum-list@2.1.0"
+Timer      = "sleitnick/timer@2.0.0"
+WaitFor    = "sleitnick/wait-for@1.0.0"
+Tree       = "sleitnick/tree@1.1.0"
+Shake      = "sleitnick/shake@1.1.0"
+Spring     = "sleitnick/spring@1.0.0"
+Streamable = "sleitnick/streamable@1.2.4"
+Loader     = "sleitnick/loader@2.0.0"
+TaskQueue  = "sleitnick/task-queue@1.0.0"
+Concur     = "sleitnick/concur@0.1.2"
+Symbol     = "sleitnick/symbol@2.0.1"
+Ser        = "sleitnick/ser@1.0.5"
+
+[server-dependencies]
+ProfileStore = "lm-loleris/profilestore@1.0.3"
