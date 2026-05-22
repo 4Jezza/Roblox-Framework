@@ -1,10 +1,10 @@
 --[[
-    CLIENT BOOT
-    -----------
-    Location in Studio: StarterPlayer.StarterPlayerScripts.Client
+	CLIENT BOOT
+	-----------
+	Location in Studio: StarterPlayer.StarterPlayerScripts.Client
 
-    Auto-loads all Knit Controllers from Controllers/ then starts Knit.
---]]
+	Auto-loads all Knit Controllers from Controllers/ then starts Knit.
+]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 

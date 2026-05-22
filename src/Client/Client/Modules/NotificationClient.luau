@@ -1,82 +1,138 @@
+--!strict
 --[[
-    NotificationClient
-    ------------------
-    Displays transient notification banners to the local player.
+	NotificationClient
+	------------------
+	Displays transient notification banners to the local player by delegating
+	to UIAnimator:ShowNotification, which drives the HUD.Notification template
+	cloning + Enlargen/Shrink lifecycle.
 
-    Public API
-    ----------
-    NotificationClient.Show(msg, templateName?, color?, duration?)
-        Main entry point. Clones a template from Ui.Notification.Templates.<templateName>
-        and parents it into the Ui.Notification container.
-        De-duplicates by msg key — calling Show() with an already-visible message
-        bumps the counter and resets the dismiss timer.
+	Public API
+	----------
+	NotificationClient.Show(msg, templateName?, color?, duration?)
+	    Delegates to UIAnimator:ShowNotification. The color parameter is
+	    accepted for backward compatibility but is currently ignored — template
+	    styling is handled by the Studio frames themselves.
 
-    NotificationClient.Success(msg, color?)   → Show with 'Success' template
-    NotificationClient.Error(msg)             → Show with 'Error' template + red tint
-    NotificationClient.ShowTutorial(msg)      → persistent tutorial banner; returns dismiss()
+	NotificationClient.Success(msg, color?)   → Show with "Notification" template
+	NotificationClient.Error(msg)             → Show with "Error" template
+	NotificationClient.ShowTutorial(msg)      → persistent tutorial banner; returns dismiss()
 
-    TODO: Replace print stubs with real clone/tween logic once StarterGui
-          Ui.Notification container and Templates exist (see Brainrot NotificationClient
-          for the full TweenService fade-in/out pattern and activeNotifications map).
---]]
+	UIAnimator lookup is lazy (via Knit.GetController) so load order is safe.
+	Falls back to print when UIAnimator is not yet ready (rule_8).
+
+	Per architecture.md § Require Paths.
+	Per api-reference.md § 1.1 Knit — Knit.GetController (lazy).
+	Per CLAUDE.md rule_8 — defensive logging + fallback on nil controller.
+	Per conventions.md § Module file structure.
+]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Knit    = require(game.ReplicatedStorage.Packages.Knit)
 local Bridges = require(ReplicatedStorage.Shared.Bridges)
 
 local NotificationClient = {}
 
+-- ---------------------------------------------------------------------------
+-- Constants
+-- ---------------------------------------------------------------------------
+
 local DISPLAY_TIME = 3.5
 
--- ========== STUB INTERNALS ==========
+-- ---------------------------------------------------------------------------
+-- Private helpers
+-- ---------------------------------------------------------------------------
 
---- Show a notification banner.
---- @param msg          The text to display.
---- @param templateName Template key ('Notification' | 'Success' | 'Error' | 'Tutorial'). Defaults to 'Notification'.
---- @param color        Optional text color override.
---- @param duration     Override display duration in seconds.
+-- Lazy getter — Knit.GetController is only valid after Knit.Start() resolves.
+local _uianim: any = nil
+local function getUIAnimator(): any?
+	if _uianim then return _uianim end
+	local ok, ctrl = pcall(function()
+		return Knit.GetController("UIAnimator")
+	end)
+	if ok and ctrl then
+		_uianim = ctrl
+	end
+	return _uianim
+end
+
+-- ---------------------------------------------------------------------------
+-- Public API
+-- ---------------------------------------------------------------------------
+
+--[[
+	Show a notification banner.
+	templateName: "Notification" | "Error" | "SpecialNotification" | "Tutorial"
+	color:        kept for backward-compat; ignored (templates carry their own style).
+	duration:     override display seconds.
+]]
 function NotificationClient.Show(msg: string, templateName: string?, color: Color3?, duration: number?)
-	local tplName     = templateName or "Notification"
-	local displayTime = duration or DISPLAY_TIME
-	-- TODO: Clone Ui.Notification.Templates.<tplName>, set label text + color,
-	--       parent into Ui.Notification container, tween size in (Back, Out),
-	--       task.delay(displayTime, fadeOut), de-duplicate by msg key.
-	print(string.format("[NotificationClient] [%s] %s (%.1fs)", tplName, msg, displayTime))
+	local ua = getUIAnimator()
+	if not ua then
+		warn("[NotificationClient] UIAnimator not ready — printing instead: " .. tostring(msg))
+		print(string.format("[NotificationClient] [%s] %s", templateName or "Notification", msg))
+		return
+	end
+	ua:ShowNotification({
+		message  = msg,
+		template = templateName or "Notification",
+		duration = duration or DISPLAY_TIME,
+		-- color is currently ignored — templates carry their own styling.
+	})
 end
 
---- Shorthand for a success-themed notification.
+--[[
+	Shorthand for a success-themed notification (uses default "Notification" template).
+]]
 function NotificationClient.Success(msg: string, color: Color3?)
-	NotificationClient.Show(msg, "Success", color)
+	NotificationClient.Show(msg, "Notification", color)
 end
 
---- Shorthand for an error-themed notification (red tint).
+--[[
+	Shorthand for an error-themed notification.
+]]
 function NotificationClient.Error(msg: string)
 	NotificationClient.Show(msg, "Error", Color3.fromRGB(255, 80, 80))
 end
 
---- Show a persistent tutorial notification at the top of the stack.
---- Returns a dismiss function — call it to remove the banner when the step ends.
---- Only one tutorial notification is active at a time; a new call dismisses the previous.
+--[[
+	Show a persistent tutorial notification.
+	Returns a dismiss function — call it to remove the banner when the step ends.
+]]
 function NotificationClient.ShowTutorial(msg: string): () -> ()
-	-- TODO: Clone Ui.Notification.Templates.Tutorial, set LayoutOrder = -1,
-	--       parent into container, store dismiss callback, return it.
-	print(string.format("[NotificationClient] [Tutorial] %s", msg))
+	local ua = getUIAnimator()
+	if not ua then
+		warn("[NotificationClient] UIAnimator not ready — printing instead: " .. tostring(msg))
+		print(string.format("[NotificationClient] [Tutorial] %s", msg))
+		local dismissed = false
+		return function()
+			if dismissed then return end
+			dismissed = true
+		end
+	end
+
+	local handle = ua:ShowNotification({
+		message  = msg,
+		template = "Tutorial",
+		duration = 999, -- persistent until explicitly dismissed
+	})
+
 	local dismissed = false
 	return function()
-		if dismissed then return end
+		if dismissed or not handle then return end
 		dismissed = true
-		print(string.format("[NotificationClient] [Tutorial] dismissed: %s", msg))
+		-- Dismiss is a plain function field ( () -> () ), NOT a method —
+		-- colon-call would silently pass `handle` as the discarded first arg.
+		handle.Dismiss()
 	end
 end
 
--- ========== INITIALIZATION ==========
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+-- ---------------------------------------------------------------------------
 
 function NotificationClient:Initialize()
-	-- Hide all template frames so they don't render as-is
-	-- TODO: walk Ui.Notification.Templates children and set Visible = false
-	--       (see Brainrot pattern: for _, tpl in TEMPLATES do tpl.Visible = false end)
-
-	-- Wire server-pushed notifications
+	-- Wire server-pushed notifications.
 	Bridges.Notify:Connect(function(data: { type: string, message: string, duration: number? })
 		NotificationClient.Show(data.message, data.type, nil, data.duration)
 	end)

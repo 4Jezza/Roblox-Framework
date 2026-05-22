@@ -290,4 +290,103 @@ function Module.number(amount: number): string
 	return Module.abbreviateNumber(amount)
 end
 
+-- ---------------------------------------------------------------------------
+-- Client-visible number API
+-- ---------------------------------------------------------------------------
+-- MANDATORY for all client-visible numeric output (see architecture.md
+-- § Client-visible numbers). Raw tostring(n) for client display is forbidden.
+
+-- Ordered suffix table capped at Qi (1e18). Values are thresholds.
+local _suffixThresholds: { { suffix: string, value: number } } = {
+	{ suffix = "Qi", value = 1e18 },
+	{ suffix = "Qa", value = 1e15 },
+	{ suffix = "T",  value = 1e12 },
+	{ suffix = "B",  value = 1e9  },
+	{ suffix = "M",  value = 1e6  },
+	{ suffix = "K",  value = 1e3  },
+}
+
+--[[
+	Format.Suffix(n, decimals?) -> string
+	DEFAULT for client-visible numbers.
+	Returns compact suffix form: "40K", "1.5M", "1.2B", "1.5T", "500Qa", "1.5Qi".
+	  • decimals defaults to 1.
+	  • Trailing ".0" is trimmed ("1.0M" -> "1M").
+	  • Numbers below 1 000 return an integer string.
+	  • Negative prefix preserved.
+	  • n >= 1e21 (past Qi range) returns Qi form of n.
+	  • n == 0 returns "0".
+
+	Usage:
+	    Format.Suffix(1500)      -- "1.5K"
+	    Format.Suffix(1500000)   -- "1.5M"
+	    Format.Suffix(1200, 0)   -- "1K"
+	    Format.Suffix(-40000)    -- "-40K"
+]]
+function Module.Suffix(n: number, decimals: number?): string
+	local dec = decimals or 1
+
+	if n == 0 then return "0" end
+
+	local negative = n < 0
+	local abs = math.abs(n)
+
+	if abs < 1000 then
+		return (negative and "-" or "") .. tostring(math.floor(abs))
+	end
+
+	-- Find the largest threshold that fits.
+	local chosenSuffix = "K"
+	local chosenValue  = 1e3
+	for _, entry in _suffixThresholds do
+		if abs >= entry.value then
+			chosenSuffix = entry.suffix
+			chosenValue  = entry.value
+			break
+		end
+	end
+
+	local raw = abs / chosenValue
+	local mult = 10 ^ dec
+	local rounded = math.floor(raw * mult + 0.5) / mult
+
+	-- Format with requested decimal places then strip trailing ".0" pattern.
+	local formatted = string.format("%." .. tostring(dec) .. "f", rounded)
+	formatted = formatted:gsub("%.?0+$", "")
+
+	return (negative and "-" or "") .. formatted .. chosenSuffix
+end
+
+--[[
+	Format.Commas(n) -> string
+	Returns n formatted with thousands commas.
+	Delegates to the existing formatWithCommas which already handles negatives
+	and decimals correctly.
+
+	Usage:
+	    Format.Commas(1500000)  -- "1,500,000"
+	    Format.Commas(-3200)    -- "-3,200"
+	    Format.Commas(99.5)     -- "99.5"
+]]
+function Module.Commas(n: number): string
+	return Module.formatWithCommas(n)
+end
+
+--[[
+	Format.Number(n, mode?) -> string
+	Convenience wrapper. mode defaults to "suffix".
+	  "suffix" -> Format.Suffix(n)
+	  "commas" -> Format.Commas(n)
+
+	Usage:
+	    Format.Number(1500000)           -- "1.5M"
+	    Format.Number(1500000, "commas") -- "1,500,000"
+]]
+function Module.Number(n: number, mode: ("suffix" | "commas")?): string
+	if mode == "commas" then
+		return Module.Commas(n)
+	end
+	return Module.Suffix(n)
+end
+
 return Module

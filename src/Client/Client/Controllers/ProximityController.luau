@@ -1,17 +1,22 @@
 --[[
-    ProximityController
-    -------------------
-    Initialises ExpressivePrompts — replaces default Roblox proximity prompt UI
-    with animated BillboardGui prompts that avoid the Pesto Professional
-    CircularProgressBar.Progress NumberValue bug.
---]]
+	ProximityController
+	-------------------
+	Initialises ExpressivePrompts — replaces default Roblox proximity prompt UI
+	with animated BillboardGui prompts that avoid the Pesto Professional
+	CircularProgressBar.Progress NumberValue bug.
+]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
 local Knit = require(ReplicatedStorage.Packages.Knit)
 
 local ProximityController = Knit.CreateController {
 	Name = "ProximityController",
 }
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+-- ---------------------------------------------------------------------------
 
 function ProximityController:KnitStart()
 	-- Defer to next frame to avoid yield-across-metamethod errors.

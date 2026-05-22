@@ -1,13 +1,13 @@
 --[[
-    ChatClient
-    ----------
-    Sends periodic tip messages and custom announcements into the local
-    player's RBXGeneral chat channel via TextChatService:DisplaySystemMessage.
+	ChatClient
+	----------
+	Sends periodic tip messages and custom announcements into the local
+	player's RBXGeneral chat channel via TextChatService:DisplaySystemMessage.
 
-    TODO: Replace TIPS table with game-specific tip strings.
-    TODO: Add custom chat events (timed warnings, server announcements, etc.)
-          in the "Add custom chat events here" section below.
---]]
+	TODO: Replace TIPS table with game-specific tip strings.
+	TODO: Add custom chat events (timed warnings, server announcements, etc.)
+	      in the "Add custom chat events here" section below.
+]]
 
 local TextChatService   = game:GetService("TextChatService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -16,14 +16,20 @@ local Bridges = require(ReplicatedStorage.Shared.Bridges)
 
 local ChatClient = {}
 
+-- ---------------------------------------------------------------------------
+-- Constants / state
+-- ---------------------------------------------------------------------------
+
 local TIP_INTERVAL = 120 -- seconds between tips (2 minutes)
 
 -- TODO: Replace with game-specific tip strings
 local TIPS = {
 	"[TIP]: This is a placeholder tip. Replace me!",
-	"[TIP]: Another placeholder tip. Add your own.",
-	"[TIP]: Visit the wiki for more information.",
 }
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+-- ---------------------------------------------------------------------------
 
 function ChatClient:Initialize()
 	-- Acquire the RBXGeneral channel once; reuse for all messages

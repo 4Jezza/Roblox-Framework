@@ -53,9 +53,11 @@ When you apply guidance from any reference file, cite it (e.g. *"per architectur
 
 > Brief for every agent: this is what the game is. Keep current — spawn `game-knowledge` to update when a system materially changes.
 
-> **TODO when you fork the boilerplate:** Replace this section with a 1-3 paragraph description of your game's mechanics, core loop, monetization, hazards, and persistence model. The boilerplate is intentionally generic — fill this in so future agents can route correctly without re-reading the whole codebase.
+This is a Knit + ProfileStore + ReplicaService + BridgeNet2 boilerplate scaffold with a fully-built platform layer but no gameplay content yet. Platform infrastructure covers: data persistence (ProfileStore), reactive replication (ReplicaService → PlayerData), client↔server networking (BridgeNet2 bridges), dev-product receipts including peer gifting, remote config (RemoteConfigHandler), analytics stubs, and inventory.
 
-This is a Knit + ProfileStore + ReplicaService + BridgeNet2 boilerplate scaffold. It contains platform infrastructure (data persistence, networking, dev-product receipts, leaderstats, dynamic Roblox configs) but no gameplay. Add your game's systems under `src/Server/Server/Modules/` (handlers) and `src/Client/Client/` (controllers, bindings, modules) following the conventions established in the platform stubs.
+The client layer ships a comprehensive animation and feedback stack: UIAnimator drives all UI transitions (hover, frame transitions, stroke scaling, currency springs, countdown, confetti, shining buttons, rotate oscillation — full preset list in `api-reference.md § Project — UIAnimator`); WorldAnimator drives in-world object behaviour (hover bob, spring grow/shrink/vanish/materialize, explode bounce, magnet-to-player, bezier move, linear spring — full preset list in `api-reference.md § Project — WorldAnimator`); SoundController handles layered + counting audio; ScreenshakeController and HapticsController provide haptic/camera feedback; PurchaseEffectsController broadcasts purchase animations; LoadingScreenController manages the animated loading screen dismiss. Player lifecycle is modelled by PlayerStateController (Idle / InMenu / InGame / InCutscene / Loading allow-list state machine). WorldEntityHandler creates server-authoritative `WorldEntity` replicas consumed by WorldAnimator and ReplicaController on the client.
+
+Add gameplay under `src/Server/Server/Modules/` (handlers) and `src/Client/Client/` (controllers, bindings, modules) following the conventions in `architecture.md`.
 
 ---
 
@@ -63,12 +65,12 @@ This is a Knit + ProfileStore + ReplicaService + BridgeNet2 boilerplate scaffold
 
 > Append when files are added/removed/renamed. Bridges are the contract surface — change those carefully and update both sides.
 
-- **Server Handlers** (`src/Server/Server/Modules/`): `DataHandler`, `ProductHandler`, `RemoteConfigHandler`, `AnalyticsHandler`, `InventoryHandler`, `AdminHandler`
-- **Client Controllers** (`src/Client/Client/Controllers/`): `GameController`, `ProximityController`
+- **Server Handlers** (`src/Server/Server/Modules/`): `DataHandler`, `ProductHandler` (incl. gifting flow), `RemoteConfigHandler`, `AnalyticsHandler`, `InventoryHandler`, `AdminHandler`, `WorldEntityHandler`
+- **Client Controllers** (`src/Client/Client/Controllers/`): `GameController`, `ProximityController`, `HapticsController`, `ScreenshakeController`, `AutoRejoinController`, `ReplicaController`, `UIAnimator/` (folder: init + HoverEffects + FrameTransitions + StrokeScaler — full preset list: `api-reference.md § Project — UIAnimator`), `WorldAnimator/` (folder: init + Presets — full preset list: `api-reference.md § Project — WorldAnimator`), `SoundController/` (folder: init + Layered + Counting + Presets), `PlayerStateController`, `PurchaseEffectsController`, `LoadingScreenController`
 - **Client Modules** (`src/Client/Client/Modules/`): `UIClient`, `NotificationClient`, `ChatClient`
 - **Configs** (`src/Shared/DataModules/`): `ProductConfig`
-- **Shared utilities** (`src/Shared/Utility/`): `Format`, `Janitor`, `Spring`, `PlayerData`, `Sequence`
-- **Bridges** (`src/Shared/Shared/Bridges.luau`): `Notify`, `OpenContainer`, `AdminCommand`
+- **Shared utilities** (`src/Shared/Utility/`): `Format` (incl. `Suffix` / `Commas` / `Number` — MANDATORY for all client-visible numbers per architecture.md § Client-visible numbers), `Janitor`, `Spring`, `PlayerData`, `Sequence`, `PlayerState` (shared types + StateDef validator for PlayerStateController)
+- **Bridges** (`src/Shared/Shared/Bridges.luau`): `Notify`, `OpenContainer`, `AdminCommand`, `GiftPurchase` (client→server, `{ targetUserId, productId }`), `GiftReceived` (server→client, `{ fromUserId, productId }`), `EmitConfetti` (server→client, `{ amount?, spawnPos? }`), `PurchaseEffect` (server→client, `{ kind: "Success" | "Failure" }`)
 
 > **TODO when you fork the boilerplate:** Add new handlers/modules/controllers/configs/bridges to the lists above as you build them. Keep this registry up to date so agents can route work correctly.
 

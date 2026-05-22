@@ -906,6 +906,71 @@ See also: § 3.1 Janitor, § 3.2 Signal.
 
 ---
 
+### Project — Format
+
+**Require:** `local Format = require(game.ReplicatedStorage.Utility.Format)`
+**Source:** `src/Shared/Utility/Format.luau`
+**Purpose:** Number and string formatting utilities. **MANDATORY for all client-visible numbers** — see `architecture.md § Client-visible numbers`. Raw `tostring(n)` for client display is forbidden.
+
+**Client-visible number API (new — use these for all player-facing output):**
+
+| Method | Signature | Description |
+|---|---|---|
+| `Format.Suffix` | `(n: number, decimals: number?) -> string` | **Default.** Compact suffix form. Suffixes: K=1e3 M=1e6 B=1e9 T=1e12 Qa=1e15 Qi=1e18. `decimals` defaults to 1. Trailing `.0` stripped. Negative prefix preserved. Below 1 000 returns integer string. |
+| `Format.Commas` | `(n: number) -> string` | Thousands-comma form. Handles negatives and decimals. |
+| `Format.Number` | `(n: number, mode: ("suffix" \| "commas")?) -> string` | Convenience wrapper. `mode` defaults to `"suffix"`. |
+
+**Usage:**
+
+```luau
+local Format = require(game.ReplicatedStorage.Utility.Format)
+
+-- Suffix (default for all player-facing numbers)
+Format.Suffix(40000)          -- "40K"
+Format.Suffix(1500000)        -- "1.5M"
+Format.Suffix(1200000000)     -- "1.2B"
+Format.Suffix(500000, 0)      -- "500K"  (0 decimal places)
+Format.Suffix(-40000)         -- "-40K"
+Format.Suffix(999)            -- "999"   (below 1 000 → integer)
+
+-- Commas
+Format.Commas(1500000)        -- "1,500,000"
+Format.Commas(-3200)          -- "-3,200"
+
+-- Number convenience
+Format.Number(1500000)                -- "1.5M"
+Format.Number(1500000, "commas")      -- "1,500,000"
+```
+
+**Legacy / other functions (pre-existing — do not duplicate):**
+
+| Method | Description |
+|---|---|
+| `Format.abbreviateNumber(x, precision?)` | Number with suffix, positive-only, no negative handling. Prefer `Format.Suffix`. |
+| `Format.abbreviateCash(x, precision?)` | Cash abbreviation (delegates to `formatCash` below 1 000). |
+| `Format.formatCash(amount)` | Full precision cash with commas: "1,000.15". |
+| `Format.formatWithCommas(num)` | Same as `Format.Commas` under the hood. |
+| `Format.formatTime(seconds, minUnit?)` | Duration string: "2:05", "1:00:05". |
+| `Format.formatTimeWithMilliseconds(s, precision, minUnit?)` | Duration + ms: "2:05.356". |
+| `Format.cash(amount)` | "$" + abbreviateCash. |
+| `Format.number(amount)` | abbreviateNumber (no "$"). |
+| `Format.getPossessiveName(name)` | "Steve" → "Steve's". |
+| `Format.getAttributeSafeString(input)` | Strip non-word chars. |
+| `Format.removeRichTextTags(input)` | Strip `<...>` tags. |
+| `Format.removeTags(str)` | Strip tags + convert `<br />` to `\n`. |
+| `Format.toPascalCase(input)` | "hello_world" → "HelloWorld". |
+| `Format.getOrdinalString(input)` | 1 → "1st", 22 → "22nd". |
+| `Format.addSpaceBeforeUpperCase(input)` | "HelloWorld" → "Hello World". |
+| `Format.splitByUppercase(input)` | "HelloWorld" → `{"Hello", "World"}`. |
+
+**Gotchas:**
+
+- `Format.Suffix` caps at Qi (1e18). Numbers above 1e18 still render in Qi form (e.g. "1500Qi") rather than falling back to raw `tostring`. If you need higher denominations extend `_suffixThresholds` in the source.
+- `Format.abbreviateNumber` and `Format.abbreviateCash` do not handle negative numbers — use `Format.Suffix` for any value that can go negative.
+- `Format.formatCash` rounds to 2 decimal places — appropriate for actual currency display ("$1,000.50"), not for large integer scores (use `Format.Suffix`).
+
+---
+
 ## 4. Table & Functional Utilities
 
 ### 4.1 Sift
@@ -1628,6 +1693,630 @@ Client wrapper around the local player's replica. See `architecture.md § Requir
 ### 9.4 Sequence (async sequencer)
 
 Project's canonical chainable async sequencer. Compose ordered/parallel/event-wait steps with one `:Run()`; cancel via `:Bind(janitor)` or `:Cancel()`. Full method table + examples in § 3.9 Sequence. Use this instead of rolling your own `task.spawn`/`task.delay`/`task.cancel` chain.
+
+---
+
+### 9.5 Project — ReplicaController (Knit controller)
+
+**Location:** `src/Client/Client/Controllers/ReplicaController.luau`
+**NOT a package** — this is a project Knit controller under `Client/Controllers/`.
+**Require (other controllers only):** `local RC = Knit.GetController("ReplicaController")`
+**Purpose:** Centralises client-side subscriptions to **non-PlayerData** replicas (world state, entity state, shared multiplayer state). The local player's replica is already handled by `PlayerData.luau` — use `ReplicaController` for every other token.
+
+Wraps `Replica.OnNew(token, ...)` from Mad Studio Replica client (§ 2.3). Internally maintains a `_replicasByToken` cache populated on arrival and pruned via `replica.Maid:Add` on destroy. One Janitor per token, nested under a controller-scope Janitor.
+
+**Public API:**
+
+| Method | Signature | Description |
+|---|---|---|
+| `:OnReplicaNew` | `(token: string, listener: (replica) -> ()) -> {Disconnect: () -> ()}` | Register a listener for all replicas of `token`. Fires for already-existing replicas (deferred replay). Returns a disconnectable connection. No yield in `listener` — `task.spawn` async work. |
+| `:GetReplicasByToken` | `(token: string) -> {Replica}` | Live snapshot (shallow copy) of all currently-active replicas for the token. |
+| `:CleanupToken` | `(token: string) -> ()` | Drop all listeners and cached refs for a token. Idempotent. |
+
+**Usage (WorldAnimator-style binding):**
+
+```luau
+-- Inside WorldAnimator/init.luau (KnitStart or after KnitStart resolves)
+local Knit = require(game.ReplicatedStorage.Packages.Knit)
+
+local WorldAnimator = {}
+
+function WorldAnimator:Initialize()
+    local RC = Knit.GetController("ReplicaController")
+
+    RC:OnReplicaNew("WorldEntity", function(replica)
+        -- replica.Data is the initial server state
+        local model = workspace:FindFirstChild(replica.Tags.ModelName)
+        if not model then
+            warn("[WorldAnimator] no model for WorldEntity:", replica.Tags.ModelName, "— skipping")
+            return
+        end
+
+        -- React to authoritative state changes; no yield permitted here
+        replica:OnSet({"animating"}, function()
+            task.spawn(function()
+                -- play hover / glow animation on `model`
+            end)
+        end)
+
+        -- Prune UI/animation state when the entity is removed
+        replica.Maid:Add(function()
+            -- tear down model highlights, etc.
+        end)
+    end)
+end
+
+return WorldAnimator
+```
+
+**Gotchas:**
+
+- `listener` passed to `:OnReplicaNew` MUST NOT yield. Fire a `Signal` or `task.spawn` if the callback body needs to yield.
+- `:CleanupToken` disconnects ALL `:OnReplicaNew` connections registered for that token. Call it only when you truly want to drop every subscriber (e.g. on a round reset).
+- `KnitStart` calls `Replica.RequestData()` (idempotent — safe even if `PlayerData.Init()` already called it).
+- Use `replica:OnSet(path, cb)` for specific-path changes and `replica:OnChange(cb)` for catch-all. `ListenToChange` does NOT exist in Mad Studio Replica (§ 2.3 Gotchas).
+
+---
+
+### 9.6 Project — SoundController (Knit controller)
+
+**Location:** `src/Client/Client/Controllers/SoundController/` (init.luau + Layered.luau, Counting.luau, Presets.luau).
+**NOT a package** — this is a project Knit controller under `Client/Controllers/`.
+**Require (other controllers only):** `local SC = Knit.GetController("SoundController")`
+**Purpose:** **MANDATORY canonical client sound entry point.** Every client-side audio call MUST go through this controller — never `:Play()` a Sound instance directly, never duplicate the dot-path resolver, never roll your own clone pool. The controller centralises sound resolution, clone pooling, category volume scaling, layered playback, and pitched count sequences.
+
+**Name resolver (`resolveSound`):** dot-path supported. Lookup priority for `name`:
+
+1. `SoundService.SFX.<a>.<b>.<name>` — full dot-path under SFX (deepest match wins).
+2. `SoundService.SFX.<name>` — last segment only under SFX root (fallback when a sub-folder miss occurred).
+3. `SoundService.Music.<a>.<b>.<name>` — full path under Music.
+4. `SoundService.Events.<a>.<b>.<name>` — full path under Events.
+
+A miss returns `(nil, nil)` and `:Play` returns a no-op `SoundHandle` (warns once per miss per rule_8). See `architecture.md § Sound runtime path` for the runtime layout.
+
+**Public API:**
+
+| Method | Signature | Description |
+|---|---|---|
+| `:Play` | `(name: string, opts: PlayOpts?) -> SoundHandle` | Resolves `name`, clones the source Sound (clones come from a per-category, per-template idle pool of cap 8), applies opts, plays, and returns a SoundHandle. Returns a no-op handle on resolver miss. |
+| `:PlayLayered` | `(names: {string}, opts: PlayOpts?) -> {SoundHandle}` | Plays N sounds simultaneously via `Layered.luau`. Returns `{ groupHandle, h1, h2, ... }` — index `[1]` is a wrapper whose `Stop()`/`SetPitch()`/`SetVolume()` fans out to all constituents; indices `[2..N+1]` are the per-sound handles. |
+| `:StopAll` | `(category: ("SFX" \| "Music" \| "Events")?) -> ()` | Stops every active clone. If `category` is provided, only stops handles in that category. |
+| `:GetCategoryVolume` | `(category: "SFX" \| "Music" \| "Events") -> number` | Returns the current volume multiplier (clamped 0–10). |
+| `:SetCategoryVolume` | `(category: "SFX" \| "Music" \| "Events", value: number) -> ()` | Sets the multiplier. Does NOT retroactively re-scale currently-playing clones; takes effect on the next `:Play`. |
+| `:CountTo` | `(opts: CountOpts) -> CountHandle` | Spawns a pitched tick sequence via `Counting.luau`. See cadence + pitch maths below. |
+
+**Type shapes:**
+
+```luau
+type PlayOpts = {
+    volume: number?,    -- 0..1 scale; overrides source.Volume before category multiplier
+    pitch:  number?,    -- defaults to source.Pitch
+    looped: boolean?,   -- defaults to source.Looped
+    parent: Instance?,  -- optional reparent (for 3D positional sounds — clone is destroyed instead of pooled when parent set)
+}
+
+type SoundHandle = {
+    Stop:      () -> (),
+    SetPitch:  (p: number) -> (),
+    SetVolume: (v: number) -> (),
+    Instance:  Sound?,                 -- the active clone; nil on miss
+    OnEnded:   (() -> ())?,            -- assignable callback fired on Sound.Ended
+}
+
+type CountOpts = {
+    from:         number,
+    to:           number,
+    totalSeconds: number,
+    soundName:    string?,                  -- defaults "UI.Counting"
+    basePitch:    number?,                  -- defaults 1.0
+    easing:       ("Slow" | "Fast")?,       -- defaults "Slow"
+}
+
+type CountHandle = {
+    Cancel:      () -> (),
+    IsPlaying:   () -> boolean,
+    SetProgress: (t: number) -> (),         -- 0..1; aligns next tick to ratio (used by Countdown pairing)
+}
+```
+
+**CountTo cadence + pitch maths:**
+
+- `totalTicks = math.max(2, math.floor(totalSeconds / 0.06))` (~16 ticks/sec base).
+- Cadence (per-tick interval, lerped over `MIN=0.04s` ↔ `MAX=0.18s` against tick ratio `t = i/totalTicks`):
+  - `easing = "Slow"` (default, count-down feel): `interval = lerp(MIN, MAX, t)` — starts fast, slows toward target.
+  - `easing = "Fast"` (count-up feel): `interval = lerp(MAX, MIN, t)` — starts slow, accelerates.
+- Pitch ramp (`basePitch * pitchScale`):
+  - count-up (`from < to`): `pitchScale = lerp(0.7, 1.5, t)` — low → high.
+  - count-down (`from > to`): `pitchScale = lerp(1.5, 0.7, t)` — high → low.
+  - flat (`from == to`): `pitchScale = 1.0`.
+- `SetProgress(t)` clamps `t` to 0..1 and snaps the internal tick index to `math.floor(t * totalTicks)` on the next loop iteration (`Countdown.luau` uses this to keep CountTo's pitch tracking the displayed number, not elapsed time).
+
+**Usage:**
+
+```luau
+local Knit = require(game.ReplicatedStorage.Packages.Knit)
+local SC   = Knit.GetController("SoundController")
+
+-- One-shot SFX with overrides.
+local h = SC:Play("UI.Click", { volume = 0.6, pitch = 1.1 })
+
+-- Listen for natural end.
+h.OnEnded = function() print("click done") end
+
+-- Layered SFX — stop the whole group together.
+local handles = SC:PlayLayered({ "UI.Click", "Reward.Sparkle" }, { volume = 0.8 })
+task.delay(2, function() handles[1].Stop() end)
+
+-- Category volume duck.
+SC:SetCategoryVolume("Music", 0.3)
+
+-- Pitched tick sequence paired with a UIAnimator:Countdown.
+local count = SC:CountTo({
+    from = 10, to = 0,
+    totalSeconds = 3,
+    soundName = "HeavyCountdown",
+    easing = "Slow",
+})
+-- Later: count.SetProgress(0.5)
+```
+
+**Gotchas:**
+
+- **NEVER `:Play()` a Sound instance directly.** All client audio goes through `SoundController:Play`. The pool, category scaling, and category-wide `:StopAll` all depend on it.
+- The clone pool keys on `source:GetFullName()`. If you reparent a template Sound at runtime, you'll fragment the pool — don't.
+- `:Play` with `opts.parent` set bypasses the pool's return path — the clone is destroyed on Ended instead of pooled. Use `parent` only for 3D positional one-shots.
+- `:SetCategoryVolume` does not retro-scale active clones (intentional — avoids zipper-like artefacts mid-play). Call it before triggering the next category-heavy burst.
+- `OnEnded` is an ASSIGNABLE field on the handle, not a signal — set it before the sound finishes or you'll miss it. Looped sounds never fire it.
+- `Presets.luau` ships intentionally empty — add entries as the project accretes sounds. Do not add presets whose Sound assets don't yet exist in Studio.
+- Resolution is silent on partial-path hits — `"UI.Click"` matches `SFX/UI/Click` AND `SFX/Click` (fallback 2). If two sounds with the same leaf name exist under different folders, the SFX-sub-path match (1) wins. Audit your Studio tree before relying on the fallback.
+
+See also: § 6.1 UIAnimator (Twinkle package — distinct from § 9.8 below), § 9.9 WorldAnimator, § 3.1 Janitor.
+
+---
+
+### 9.7 Project — PlayerStateController (Knit controller)
+
+**Location:** `src/Client/Client/Controllers/PlayerStateController.luau` (runtime) + `src/Shared/Utility/PlayerState.luau` (shared types + validator).
+**NOT a package** — this is a project Knit controller plus a paired shared utility.
+**Require (other controllers only):** `local PSC = Knit.GetController("PlayerStateController")`
+**Purpose:** **MANDATORY single source of truth** for the local player's coarse-grained state. UI bindings and gameplay code MUST consult this controller (or pass `force = true` through UIClient) before opening a frame or running an action — **never invent ad-hoc booleans** for "is the player in a cutscene", "is the menu open", etc. Each *state* is one named bucket of allow/deny rules for two `kind`s: `"frame"` (UI surfaces) and `"action"` (gameplay verbs).
+
+**Rule resolution (`:IsAllowed(kind, id)`):**
+
+1. `id` listed in DeniedX → `false` (deny wins).
+2. AllowedX is `nil` → `true` (nil = wildcard).
+3. AllowedX listed → membership check on the list.
+4. AllowedX is `{}` → `false` (explicit lock-everything).
+
+Unknown `kind` and unknown `id` types fail closed (`false` + warn per rule_8).
+
+**Public API:**
+
+| Method / Field | Signature | Description |
+|---|---|---|
+| `:Register` | `(def: StateDef) -> ()` | Register a state def. Throws on duplicate `Name` or malformed def — programmer error, intentionally loud. Validation goes through `PlayerState.ValidateDef`. |
+| `:Set` | `(stateName: string) -> ()` | Transition. Calls outgoing `OnExit(next)`, swaps current, fires `Changed`, calls incoming `OnEnter(prev)`. No-op when already in that state. Unregistered name warns + stays put. **Fully synchronous — never yields.** |
+| `:Get` | `() -> string` | Current state name (always populated post-KnitInit). |
+| `:IsAllowed` | `(kind: "frame" \| "action", id: string) -> boolean` | Apply the rule-resolution table above. Unknown kinds fail closed. |
+| `.Changed` | `Signal<prev: string, next: string>` | Fires after current swap, before `OnEnter`. Sleitnick `Signal.new()` per § 3.2. |
+
+**StateDef shape** (from `src/Shared/Utility/PlayerState.luau`):
+
+```luau
+export type StateDef = {
+    Name:           string,                                   -- unique key
+    AllowedFrames:  { string }?,                              -- nil = allow all; {} = lock all
+    DeniedFrames:   { string }?,                              -- deny wins over allow
+    AllowedActions: { string }?,
+    DeniedActions:  { string }?,
+    OnEnter:        ((prev: string?) -> ())?,                 -- synchronous; must not yield
+    OnExit:         ((next: string?) -> ())?,                 -- synchronous; must not yield
+}
+```
+
+`PlayerState.ValidateDef(def)` returns `(true, nil)` on success or `(false, errMessage)` on the first structural problem found.
+
+**Built-in states (registered in `KnitInit`):**
+
+| Name | Allow / Deny | Intent |
+|---|---|---|
+| `Idle` | (no restrictions) | Default after boot. Everything allowed. `DEFAULT_STATE`. |
+| `InMenu` | `DeniedActions = { "OpenContainer" }` | Player paging menus. UI surfaces unrestricted; in-world gameplay actions are gated case-by-case. |
+| `InGame` | `DeniedFrames = { "Shop", "Settings" }` | Actively playing. Menu-type frames stay closed; gameplay actions unrestricted. |
+| `InCutscene` | `AllowedFrames = {}`, `AllowedActions = {}` | Cinematic. Lock everything (empty whitelists are explicit "deny all"). |
+| `Loading` | `AllowedFrames = {}`, `AllowedActions = {}` | Initial loading screen. Locked until the loading-screen flow explicitly `:Set("Idle")`. |
+
+Extend these built-ins as the project accretes features. New ad-hoc states must be registered via `:Register` from another controller's `KnitInit` (not at module top-level — `Knit.GetController` only resolves post-Init).
+
+**Sequence integration:** `:Set` is synchronous and never yields, so it composes cleanly inside a `Sequence:Step(...)` (§ 3.9):
+
+```luau
+Sequence.new()
+    :Step(function() PSC:Set("InCutscene") end)
+    :Wait(2)
+    :Step(function() PSC:Set("Idle") end)
+    :Run()
+```
+
+**UIClient integration:** `UIClient:OpenFrame(frame, { force = true })` bypasses the `IsAllowed("frame", ...)` gate — used for system-mandated frames (loading screens, post-mortem panels) that must surface regardless of state. Default `force = false` requires a passing `IsAllowed` check.
+
+**Usage:**
+
+```luau
+local Knit  = require(game.ReplicatedStorage.Packages.Knit)
+local PSC   = Knit.GetController("PlayerStateController")
+
+-- Gate an opener.
+local function tryOpenShop()
+    if not PSC:IsAllowed("frame", "Shop") then
+        warn("[ShopBinding] Shop blocked in state '" .. PSC:Get() .. "'")
+        return
+    end
+    UIClient:OpenFrame(playerGui.ShopFrame)
+end
+
+-- Subscribe to transitions.
+PSC.Changed:Connect(function(prev, next)
+    print(("[hud] state %s -> %s"):format(prev, next))
+end)
+
+-- Register a feature-specific state from a controller's KnitInit (NOT KnitStart —
+-- callers should not depend on registration timing).
+function MyController:KnitInit()
+    PSC:Register({
+        Name = "InCombat",
+        DeniedFrames  = { "Shop", "Settings", "Inventory" },
+        DeniedActions = { "OpenContainer" },
+        OnEnter = function(prev) print("entered combat from", prev) end,
+    })
+end
+```
+
+**Gotchas:**
+
+- **`OnEnter` / `OnExit` MUST NOT yield.** Both are pcall'd synchronously inside `:Set`; a yield inside one of them defers transitions and breaks the Sequence-friendliness contract.
+- `:Register` throws on duplicates by design (programmer error). Don't wrap it in `pcall` to "make it idempotent" — fix the duplicate registration instead.
+- `:Set` to an unregistered name warns and stays in the current state — it does NOT throw. Callers that depend on transitions completing should check `PSC:Get() == expectedName` after.
+- An empty list (`{}`) is meaningfully different from `nil` — `{}` means "deny everything of this kind", `nil` means "allow everything of this kind". Don't confuse the two.
+- `Changed` fires AFTER the current swap but BEFORE `OnEnter` runs. Listeners observing `PSC:Get()` inside Changed see the new state.
+
+See also: § 3.2 Signal, § 3.9 Sequence, § 9.8 UIAnimator (frame gating via `OpenFrame`).
+
+---
+
+### 9.8 Project — UIAnimator (Knit controller) — preset library
+
+**Location:** `src/Client/Client/Controllers/UIAnimator/` (init.luau + HoverEffects.luau, FrameTransitions.luau, StrokeScaler.luau, Presets/{Confetti, ShiningButton, RotateOscillate, NumberLabel, Countdown, Enlargen, Shrink, Notification}.luau).
+**NOT a package** — this is a project Knit controller that sits ABOVE the vendored Twinkle package (§ 6.1). Different parent, different `Knit Name = "UIAnimator"`. Call-sites use this controller; never reach for `Packages.UIAnimator` directly.
+**Require (other controllers only):** `local UIA = Knit.GetController("UIAnimator")`
+
+**KnitStart side-effects:**
+
+- Boots `HoverEffects`, `FrameTransitions`, `StrokeScaler`, and `Presets` (which currently boots only `ShiningButton` — `RotateOscillate.Start` is exported but not auto-booted; explicit `:RotateOscillate(obj, opts)` is the preferred path).
+- **Mobile force-landscape**: on touch-only devices (`UserInputService.TouchEnabled` AND not `KeyboardEnabled` AND not `GamepadEnabled`), waits 1s post-KnitStart then sets `PlayerGui.ScreenOrientation = LandscapeRight`. Wrapped in `task.spawn` so KnitStart dispatch is never blocked.
+- Hides the four notification templates (`Notification`, `Error`, `SpecialNotification`, `Tutorial`) under `PlayerGui.Ui.HUD.Notification` so they don't render in their default visible state.
+
+**Public API — frame management:**
+
+| Method | Signature | Description |
+|---|---|---|
+| `:OpenFrame` | `(frame: Frame, duration: number?) -> ()` | Zoom entrance via `FrameTransitions.Open`. `duration` defaults to 0.4s (S1 Duration Playbook — standard modal open). nil-frame warns + returns. |
+| `:CloseFrame` | `(frame: Frame, duration: number?) -> ()` | Zoom exit. `duration` defaults to 0.25s (S1 — exits ≈62% of entry). |
+| `:TagButton` | `(button: GuiButton) -> ()` | Manually wire hover/press effects on a button not yet tagged with the `"Animatable"` CollectionService tag. Tagged buttons are auto-wired by `HoverEffects.Start`. |
+
+**Public API — Presets:**
+
+| Method | Signature | Description |
+|---|---|---|
+| `:Confetti` | `(opts: ConfettiOpts?) -> ()` | Screen-space confetti burst. Delegates to `Presets.Confetti.Emit`. |
+| `:TagShiny` | `(button: GuiButton) -> ()` | Apply the periodic gradient-shine flash. Equivalent to runtime-tagging `"ShiningButton"` via CollectionService. |
+| `:RotateOscillate` | `(obj: GuiObject, opts: RotateOpts?) -> Handle` | Slow spring-driven back-and-forth rotation. CS tag `"RotateOscillate"` triggers auto-wire. |
+| `:BindNumberLabel` | `(label: TextLabel, getValue: () -> number, opts: NumberOpts?) -> NumberHandle` | Spring-driven animated counter bound to an explicit getter. |
+| `:BindPlayerDataNumber` | `(label: TextLabel, dataPath: {string}, opts: NumberOpts?) -> NumberHandle` | Same engine, reactive via `PlayerData.OnSet(dataPath)`. |
+| `:BindReplicaNumber` | `(label: TextLabel, replica: any, dataPath: {string}, opts: NumberOpts?) -> NumberHandle` | Same engine, reactive via `replica:OnSet`. **Auto-cleans via `replica.Maid`** on replica destroy (§ 2.3). |
+| `:Countdown` | `(label: TextLabel, opts: CountdownOpts) -> CountdownHandle` | Animated countdown/countup with whole-number sound + UIScale pop + one-shot rotation flash. |
+| `:Enlargen` | `(obj: GuiObject, opts: EnlargenOpts?) -> Handle` | Spring scale-up via UIScale. |
+| `:Shrink` | `(obj: GuiObject, opts: ShrinkOpts?) -> Handle` | Spring scale-down via UIScale (mirror of Enlargen). |
+| `:ShowNotification` | `(messageOrOpts: string \| NotificationOpts) -> NotificationHandle?` | Clone a template from `HUD.Notification`, play Enlargen entrance, hold, Shrink exit. Returns nil if container/template missing. |
+| `:Notify` | `(message: string) -> ()` | Convenience: default-template notification, all defaults. |
+| `:NotifyError` | `(message: string) -> ()` | Convenience: `Error` template. |
+| `:NotifyTutorial` | `(message: string) -> ()` | Convenience: `Tutorial` template, `duration = 999` (persistent). |
+| `:NotifySpecial` | `(message: string) -> ()` | Convenience: `SpecialNotification` template. |
+
+**Preset details:**
+
+**Confetti** (`Presets.Confetti`)
+
+- Maintains ONE persistent `ScreenGui` named `"ConfettiGui"` under PlayerGui; reused across emits; auto-destroyed when `_activePieces == 0` and `_activeEmitters == 0`.
+- Sound: pass `opts.sound = nil` (or omit) for default `"UI.Reward.Fireworks"`; pass `opts.sound = Confetti.NoSound` (unique table sentinel) to suppress; pass `opts.sound = "<name>"` for an override.
+- Shapes randomised over `{Square, Circle, Diamond, Triangle}`; colours from a fixed 6-entry palette; physics is raw RenderStepped with gravity (600 px/s²), spawn cascade staggered over ~0.8s, despawn at scale-Y > 1.3.
+- `ConfettiOpts = { amount: number? = 250, spawnPos: UDim2? = randomised top strip, sound: any? }`.
+
+**ShiningButton** (`Presets.ShiningButton`, CS tag `"ShiningButton"`)
+
+- `Tag(button)` / `Untag(button)` — manual runtime wiring (CS tag does the same).
+- `Start()` — boots the CollectionService watcher; called from `Presets.Start` at KnitStart.
+- Pulse cycle: 0.4s resume + 1.5s pause via `EZVisualz.new(button, "Shine", 0.007, 1)` (§ 7.1). One Janitor per tagged button, `LinkToInstance(button)` so cleanup is automatic on Destroy.
+
+**RotateOscillate** (`Presets.RotateOscillate`, CS tag `"RotateOscillate"`)
+
+- `Apply(obj, opts?) -> Handle = { Cancel, IsRunning }`.
+- Default `opts = { angle = 5, period = 1.6, smoothTime = 0.25 }` — spring on the Rotation property, target toggles every half-period.
+- Resets `obj.Rotation = 0` on Cancel.
+
+**NumberLabel** (`Presets.NumberLabel`) — three entry points sharing one engine
+
+- `BindExplicit(label, getValue, opts?)` — caller drives via `handle.Refresh()` or `opts.poll` (seconds).
+- `BindPlayerData(label, dataPath, opts?)` — subscribes to `PlayerData.OnSet(dataPath)`; initial render fires via `PlayerData.OnReady`.
+- `BindReplica(label, replica, dataPath, opts?)` — subscribes to `replica:OnSet(dataPath)`; **`replica.Maid:Add(handle.Unbind)`** so the binding tears down on replica destroy (§ 2.3 auto-clean pattern).
+- Shared `NumberOpts = { format = "suffix" | "commas", smoothTime = 0.25, impulseOnDelta = 0.08, poll = nil }`. `format` defaults to `"suffix"` per `architecture.md § Client-visible numbers` — `Format.Suffix` / `Format.Commas` (§ Project — Format).
+- Engine: number spring + UIScale "pop" spring (smoothTime 0.12). When `|new - oldTarget| >= |new| * impulseOnDelta`, the UIScale spring gets `Impulse(0.15)`. Heartbeat loop re-arms only while motion is in flight; settle threshold disconnects to save frame budget.
+- Shared `NumberHandle = { Refresh: () -> (), Unbind: () -> (), GetDisplayed: () -> number }`.
+- `j:LinkToInstance(label)` — auto-clean on label destroy.
+
+**Countdown** (`Presets.Countdown`)
+
+- `Start(label, opts) -> CountdownHandle = { Cancel, IsRunning, GetCurrent }`.
+- `opts.from` required. Defaults: `to = 0`, `tickInterval = 0.1`, `soundName = "HeavyCountdown"`, `onWholeNumber = nil`, `onComplete = nil`, `pairSound = nil`.
+- Direction inferred from `from > to`; step magnitude = `tickInterval`. Renders one decimal: `string.format("%.1f", current)`.
+- On every whole-number hit: plays `soundName` via `SoundController:Play` (§ 9.6), spring-impulses the UIScale (`IMPULSE_STRENGTH = 0.35`, smoothTime 0.12), and triggers a fire-and-forget TweenService rotation flash (15° tilt over 0.075s + return — explicitly documented exemption to rule_7 for one-shot label rotation; cannot conflict with UIAnimator since UIAnimator never touches `.Rotation` on TextLabels outside RotateOscillate).
+- `opts.pairSound` — pass any handle with `:SetProgress(t)` (typically the `CountHandle` from `SoundController:CountTo`) and Countdown will call `pairSound:SetProgress(elapsed / duration)` on every tick. Keeps an external sound's pitch tracking the displayed number.
+
+**Enlargen / Shrink** (`Presets.Enlargen`, `Presets.Shrink`)
+
+- `Apply(obj, opts?) -> Handle = { Cancel, Completed: Signal<>, IsRunning }`. `Completed` is sleitnick `Signal.new()` (§ 3.2).
+- Defaults: Enlargen `{ fromScale = 0.6, toScale = 1.0, smoothTime = 0.18 }`. Shrink `{ fromScale = 1.0, toScale = 0.0, smoothTime = 0.18 }`. Optional `completedFn` is also fired on completion (in addition to the signal).
+- Engine: Spring on a UIScale child (created if absent). Settle = `|current - target| < 0.002` AND `|velocity| < 0.01`. `MAX_DT = 1/30` clamp to avoid lag-spike overshoot.
+
+**Notification** (`Presets.Notification`)
+
+- `Show(messageOrOpts) -> NotificationHandle? = { Dismiss, IsActive }`. Returns nil if the container `PlayerGui.Ui.HUD.Notification` or the requested template is missing.
+- `NotificationOpts = { message, template = "Notification" | "Error" | "SpecialNotification" | "Tutorial", duration = 4, sound = nil | string | false, onDismissed }`.
+- Lifecycle: resolve container → resolve template (FindFirstChild on the template name) → clone → set `Label.Text = message` (fallback: any `TextLabel` descendant) → play sound (`SoundController:Play` of `sound` or `"UI.Notification"`; pass `sound = false` to suppress) → `Enlargen.Apply(clone)` entrance → `task.wait(duration)` → `Shrink.Apply(clone, { toScale = 0 })` exit → destroy clone → fire `onDismissed`.
+- `Dismiss()` is safe to call mid-flight: cancels an in-flight Enlargen, runs the Shrink exit. Idempotent.
+- Templates are hidden at KnitStart by `UIAnimator/init.luau`'s template-hide spawn so they don't render before first use.
+
+**Usage:**
+
+```luau
+local Knit = require(game.ReplicatedStorage.Packages.Knit)
+local UIA  = Knit.GetController("UIAnimator")
+
+-- Frame transitions.
+UIA:OpenFrame(playerGui.ShopFrame)               -- 0.4s default
+UIA:CloseFrame(playerGui.ShopFrame, 0.2)         -- override
+
+-- Number label bound to PlayerData (reactive, no polling).
+local cashHandle = UIA:BindPlayerDataNumber(hud.CashLabel, { "cash" })
+-- Later: cashHandle.Unbind()
+
+-- Countdown paired with SoundController's CountTo for synchronised pitch.
+local SC = Knit.GetController("SoundController")
+local soundCount = SC:CountTo({ from = 10, to = 0, totalSeconds = 5 })
+local visualCount = UIA:Countdown(hud.TimerLabel, {
+    from = 10, to = 0,
+    tickInterval = 0.1,
+    pairSound    = soundCount,
+})
+
+-- Notifications.
+UIA:Notify("Quest complete!")
+UIA:NotifyError("Not enough coins")
+UIA:NotifyTutorial("Press E to interact")        -- duration = 999
+
+-- One-shot confetti suppressing the default sound.
+local Presets = require(playerScripts.Client.Controllers.UIAnimator.Presets)
+UIA:Confetti({ amount = 400, sound = Presets.Confetti.NoSound })
+```
+
+**Gotchas:**
+
+- This controller is DISTINCT from the vendored `Packages.UIAnimator` (Twinkle, § 6.1). The Twinkle package is a transitive dependency — call-sites should use this controller's API surface, never `require` the package directly.
+- `:Confetti`, `:Countdown`, and `:Notification` all consume `SoundController` via `Knit.GetController("SoundController")` — load order matters; reach for the audio controller lazily (these presets already do via pcall'd getters).
+- `Notification.Show` requires templates at `PlayerGui.Ui.HUD.Notification.<TemplateName>`. Missing template warns and returns nil; check the return.
+- `BindReplicaNumber` auto-cleans via `replica.Maid` — callers don't need a separate Janitor for the binding. But if you want to unbind earlier (e.g. on UI close), call `handle.Unbind()` explicitly.
+- `Countdown`'s one-shot rotation flash uses TweenService — that's the documented rule_7 exemption (fire-and-forget on a non-temporary instance is acceptable because UIAnimator never touches `.Rotation` on TextLabels outside `RotateOscillate`).
+- `RotateOscillate.Start` exists but is NOT auto-booted by `Presets.Start` — wire it explicitly from `UIAnimator/init.luau:KnitStart` if you want CS-tag-driven auto-wiring. Manual `:RotateOscillate` calls work either way.
+- Mobile force-landscape fires only on touch-only devices and only once at KnitStart — it does NOT re-fire if input devices change at runtime.
+
+See also: § 6.1 UIAnimator (vendored Twinkle package), § 5.1 Spring, § 3.1 Janitor, § 3.2 Signal, § 7.1 EZVisualz, § Project — Format, § 9.6 SoundController, § 9.7 PlayerStateController.
+
+---
+
+### 9.9 Project — WorldAnimator (Knit controller)
+
+**Location:** `src/Client/Client/Controllers/WorldAnimator/` (init.luau + Presets/{HoverBob, SpringGrow, SpringShrink, SpringVanish, SpringMaterialize, ExplodeBounce, MagnetToPlayer, BezierMove, LinearSpring}.luau).
+**NOT a package** — this is a project Knit controller. **Knit Name:** `"WorldAnimator"`.
+**Require (other controllers only):** `local WA = Knit.GetController("WorldAnimator")`
+**Purpose:** World-space animation orchestrator. Maps named presets to either a one-shot `Instance` (`:Apply`) or to a Replica `Token` (`:Bind`), where every replica of that token gets its preset run on `replica.BoundInstance` with `Cancel` automatically tied to `replica.Maid`. This is the canonical client-side world-animation flow — pair with `WorldEntityHandler` (§ 9.11) on the server.
+
+**Universal target resolver** (`_resolveAnchor`): every preset accepts ANY `Instance`. The resolver returns a position-bearing `BasePart`:
+
+- `BasePart` → itself (kind `"BasePart"`).
+- `Model` with `PrimaryPart` set → `model.PrimaryPart` (kind `"PrimaryPart"` — preset uses `PivotTo` for the model).
+- `Model` without `PrimaryPart` → `model:FindFirstChildWhichIsA("BasePart", true)` with a warn (kind `"Model-noPrimary"`).
+- Otherwise → warns + returns `(nil, nil)` and `:Apply` returns a no-op `Handle`.
+
+**Public API:**
+
+| Method / Field | Signature | Description |
+|---|---|---|
+| `:Apply` | `(presetName: string, target: Instance, opts: any?) -> Handle` | One-shot. Resolves the preset, calls it with a fresh Janitor, returns the `Handle` augmented so `Cancel()` also tears down the janitor. Missing preset / unresolvable target → no-op Handle with already-fired `Completed`. |
+| `:Bind` | `(token: string, presetName: string, opts: any?) -> { Disconnect: () -> () }` | Subscribe via `ReplicaController:OnReplicaNew(token)` (§ 9.5). For every replica that arrives, calls `:Apply(presetName, replica.BoundInstance, opts)` and `replica.Maid:Add(handle.Cancel)` so the animation stops automatically when the replica is destroyed. Double-bind on the same token warns + no-ops. |
+| `:Unbind` | `(token: string) -> ()` | Cancel all in-flight handles for `token`, drop the binding. Idempotent — no-op + warn if no active binding. |
+| `.Presets` | `{ [string]: PresetFn }` | Read-only reference to the preset registry. `PresetFn = (target: Instance, opts: any?, janitor: Janitor) -> Handle`. |
+
+`Handle = { Cancel: () -> (), Completed: Signal<>, IsRunning: () -> boolean }`. All `Completed` signals are sleitnick `Signal.new()` (§ 3.2).
+
+**Presets** (one line each):
+
+| Name | Opts | Behaviour |
+|---|---|---|
+| `HoverBob` | `{ amplitude = 0.5, period = 2.0, axis = Vector3.yAxis }` | Sine oscillation along an axis driven by a Spring (smoothTime 0.4) so motion settles gracefully when cancelled. Atmospheric idle effect. |
+| `SpringGrow` | `{ factor = 1.3, impulseSeconds = 0.18 }` | Spring impulse on size outward, settles back to original. "I'm here" arrival pop. |
+| `SpringShrink` | `{ factor = 0.8, impulseSeconds = 0.18 }` | Mirror of SpringGrow with negative impulse — hit / retreat squash. |
+| `SpringVanish` | `{ smoothTime = 0.25 }` | Spring size down to near-zero. Caller destroys after `Completed`. Pickup / consumed / despawn. |
+| `SpringMaterialize` | `{ smoothTime = 0.25 }` | Inverse of Vanish — captures `originalSize`, drops to near-zero, springs to full. Spawn / reward drop. |
+| `ExplodeBounce` | `{ spread = 8, height = 12, settleSeconds = 2.0 }` | Phase 1: quadratic Bezier arc over `settleSeconds * 0.7`. Phase 2: Spring at end position with downward impulse settle (smoothTime 0.4). Coin / loot / ejected part. |
+| `MagnetToPlayer` | `{ player = LocalPlayer, speed = 40, touchKill = true, smoothTime = 0.4 }` | Speed-capped spring (`Spring.new(initial, smoothTime, maxSpeed)` — third arg to Spring.new per § 5.1) chases HRP; fires `Completed` on touch with any character part; sets `CanCollide = false` during flight and restores on Cancel. |
+| `BezierMove` | `{ from, control, to, seconds = 1.0, ease = "quad" }` (linear/quad/cubic) | Quadratic Bezier curve traversal. Fires `Completed` at `t = 1`. |
+| `LinearSpring` | `{ to: Vector3, smoothTime = 0.4 }` | Plain critically-damped spring move to `to`. Settle ≤ 0.05 studs. The simplest "move here". |
+
+All presets register every connection with explicit `"Disconnect"` per § 3.1 (ZonePlus-gotcha rule applies broadly — explicit is always safe).
+
+**Canonical world-animation flow** (`:Bind` → ReplicaController → `replica.Maid` auto-clean):
+
+```luau
+local Knit = require(game.ReplicatedStorage.Packages.Knit)
+
+local WorldVisualsController = {}
+
+function WorldVisualsController:KnitStart()
+    local WA = Knit.GetController("WorldAnimator")
+
+    -- Every "WorldEntity" replica of Tag.Kind = "Coin" hovers + materialises.
+    WA:Bind("WorldEntity", "HoverBob", { amplitude = 0.6, period = 1.8 })
+    -- The handle Cancel is auto-attached to replica.Maid — when the server
+    -- destroys the replica (e.g. coin picked up), the hover stops automatically.
+end
+
+return WorldVisualsController
+```
+
+**One-shot usage:**
+
+```luau
+local WA = Knit.GetController("WorldAnimator")
+
+-- Materialise a freshly-cloned model.
+local h = WA:Apply("SpringMaterialize", spawnedModel, { smoothTime = 0.3 })
+h.Completed:Connect(function() print("appeared") end)
+
+-- Magnet a coin to the player on pickup, then destroy.
+local magnet = WA:Apply("MagnetToPlayer", coinModel, { speed = 60, touchKill = true })
+magnet.Completed:Connect(function() coinModel:Destroy() end)
+
+-- Cancel mid-flight.
+task.delay(1, function() magnet.Cancel() end)
+```
+
+**Gotchas:**
+
+- `:Bind` called before `KnitStart` warns + returns a no-op disconnect — `_replicaController` is fetched in `KnitStart` (per § 1.1 Knit Client, `GetController` is only safe post-Init).
+- `:Bind` is per-token-singleton — double-binding the same token warns + no-ops. Call `:Unbind(token)` first if you need to swap presets.
+- `MagnetToPlayer` sets `CanCollide = false` during flight; if you Cancel mid-flight the connections restore the prior `CanCollide` state. Don't manually toggle `CanCollide` while a magnet is in flight.
+- `SpringVanish` leaves the target at near-zero size — caller is responsible for `Destroy()` (typically wired off `Completed`).
+- The resolver's `Model` → `PrimaryPart` path uses `PivotTo` for the model translation. If you've set a non-trivial pivot, motion respects that. Presets that anchor on `Size` (SpringGrow/Shrink/Vanish/Materialize) operate on the anchor BasePart's `Size` — they do NOT scale every child of a Model.
+- Presets are functions, not classes — accessing `WA.Presets.HoverBob` and calling it directly bypasses the janitor wiring (`Apply` adds the janitor + cancel augmentation). Always go through `:Apply` / `:Bind`.
+
+See also: § 9.5 ReplicaController (the `OnReplicaNew` flow that `:Bind` consumes), § 9.11 WorldEntityHandler (the server-side replica producer), § 5.1 Spring, § 3.1 Janitor, § 3.2 Signal.
+
+---
+
+### 9.10 Project — AutoRejoinController (Knit controller)
+
+**Location:** `src/Client/Client/Controllers/AutoRejoinController.luau`.
+**NOT a package** — project Knit controller. **Knit Name:** `"AutoRejoinController"`.
+**Require (other controllers only):** `local AR = Knit.GetController("AutoRejoinController")`
+**Purpose:** Automatically teleport the local player back to the same place on a network-loss disconnect. Listens to `GuiService` for disconnect-style error dialogs, debounces, and calls `TeleportService:Teleport(game.PlaceId, LocalPlayer)`.
+
+**Detection pattern (DevForum-standard):**
+
+- Hook `GuiService:GetPropertyChangedSignal("ErrorMessageChanged")` — fires whenever the client surfaces an error / kick dialog. No RemoteEvent, no polling.
+- On each fire, read `GuiService.ErrorMessageText` and match (case-insensitive) against `DISCONNECT_PATTERNS = { "lost", "disconnect", "could not", "27[7-9]", "timed out" }`. Patterns cover network timeout, Roblox kick codes 277/278/279, and generic drop messages.
+- On match: 15s debounce flag, then `_attemptRejoin`.
+
+**Public API (`:_TestTrigger` is the only public method — `_` prefix reflects dev-only intent):**
+
+| Method | Signature | Description |
+|---|---|---|
+| `:_TestTrigger` | `(simulatedMessage: string?) -> ()` | Dev-only. Runs the full detection chain against a simulated `ErrorMessageText` WITHOUT actually calling `TeleportService:Teleport`. Default message: `"Lost connection — Error code 277"`. **No-op outside Studio** (warn + return). |
+
+**Studio dry-run gate:** `_attemptRejoin` checks `RunService:IsStudio()` and warns + returns instead of calling `TeleportService:Teleport`. The listener itself binds in ALL environments (including Studio) so `:_TestTrigger` can exercise the full chain; only the teleport call is gated. This means production builds run the real teleport, Studio runs the dry-run, with one code path.
+
+**Captured-state pattern:** `task.delay(DEBOUNCE_SECONDS, ...)` captures `self` into a local `ctrl` BEFORE the delay fires (per architecture.md § Capture state into locals BEFORE `task.delay` callbacks). The callback nil-checks `ctrl` before clearing the debounce.
+
+**Usage:**
+
+```luau
+-- From a dev panel or debug binding (Studio only):
+local Knit = require(game.ReplicatedStorage.Packages.Knit)
+local AR   = Knit.GetController("AutoRejoinController")
+
+AR:_TestTrigger("Connection timed out")   -- exercises the chain dry-run
+AR:_TestTrigger()                          -- uses the default message
+```
+
+**Gotchas:**
+
+- `:_TestTrigger` is dev-only by design — calling it from a live binding in production warns + no-ops. Wire it only from a Studio-gated panel.
+- `DISCONNECT_PATTERNS` is intentionally broad. If you see false-positive teleports on a non-disconnect error, narrow the patterns rather than disabling the controller.
+- The listener fires on EVERY error dialog (kicks, custom kicks from `Player:Kick`, network drops). If you want to suppress rejoin for custom kicks, prefix your kick message with something the patterns won't match (e.g. `"[KICK]"`).
+- `TeleportService:Teleport` throws in edit/run mode — that's why the Studio gate exists. Never remove the gate or you'll break the test harness.
+- Debounce is per-controller-instance — there's only one `AutoRejoinController` so it's effectively global. 15s is the right window for transient network blips; do not lower it (you'll thrash on a sustained outage).
+
+See also: § 1.1 Knit, § 3.1 Janitor, architecture.md § Capture state.
+
+---
+
+### 9.11 Project — WorldEntityHandler (server module)
+
+**Location:** `src/Server/Server/Modules/WorldEntityHandler.luau`.
+**NOT a package** — project server module under `Server/Modules/`. Registered + initialised by `GameService` per architecture.md § How to add a new handler.
+**Require (server only):** `local WEH = require(game.ServerScriptService.Server.Modules.WorldEntityHandler)`
+**Purpose:** Create and manage **non-PlayerData** Replica instances ("WorldEntity" replicas) that represent world state — items, props, dynamic objects whose state the client mirrors via `ReplicaController` (§ 9.5) and animates via `WorldAnimator` (§ 9.9). Pair this with `WorldAnimator:Bind("WorldEntity", ...)` on the client.
+
+**Token name:** `"WorldEntity"` (declared once in `:Initialize` per § 2.2 — duplicate `Replica.Token` calls throw). All replicas this handler produces share this token; differentiate by `Tags.Kind` (the `kind` argument to `:Spawn`).
+
+**Replica direct-use note:** unlike `DataService` (which wraps Replica for PER-PLAYER profile state), this handler calls `Replica.New` / `:BindToInstance` / `:Replicate` / `:Set` directly. That's intentional — these are WORLD replicas, not per-player, so the leaving-race fallback in DataService doesn't apply. Per architecture.md § Critical Bans, the "never call `Replica.New` outside DataService" rule applies to **player data only**. World replicas live here.
+
+**Public API:**
+
+| Method | Signature | Description |
+|---|---|---|
+| `:Initialize` | `() -> ()` | Called from `GameService:KnitStart`. Declares `TOKEN = Replica.Token("WorldEntity")` (must run once). Hooks `Players.PlayerRemoving` for forward-compatible per-player cleanup (currently a no-op placeholder). |
+| `.Spawn` | `(instance: Instance, kind: string, data: {}?) -> Replica` | Create a replica bound to `instance` with `Tags = { Kind = kind }` and initial `Data = data or {}`. Calls `:BindToInstance(instance)` + `:Replicate()`. **Idempotent** — re-spawning an already-tracked instance warns + returns the existing replica. Auto-despawn wired via `instance.Destroying`. Throws on non-Instance `instance` or empty `kind`. |
+| `.Despawn` | `(instance: Instance) -> ()` | Destroy the replica bound to `instance` and remove it from tracking. No-op + warn if `instance` was never spawned. |
+| `.Update` | `(instance: Instance, path: {string}, value: any) -> ()` | Mutate via `replica:Set(path, value)` (§ 2.2). No-op + warn if `instance` was never spawned (warn includes the path joined by `.` for diagnostics). |
+
+`.Spawn` / `.Despawn` / `.Update` are dot-call (no `self`); only `:Initialize` is colon-call (mirrors the lifecycle convention).
+
+**Server usage (paired with WorldAnimator on the client):**
+
+```luau
+local WEH = require(script.Parent.Modules.WorldEntityHandler)
+
+-- Spawn a coin replica bound to a workspace model.
+local coin = workspace.Coins.Coin1
+local replica = WEH.Spawn(coin, "Coin", { sparkle = true })
+
+-- Push state changes — clients see them via replica:OnSet.
+WEH.Update(coin, { "sparkle" }, false)
+
+-- Despawn explicitly (or just :Destroy() the model — Destroying auto-cleans).
+WEH.Despawn(coin)
+```
+
+**Client side** (`WorldAnimator:Bind` already documented in § 9.9):
+
+```luau
+local WA = Knit.GetController("WorldAnimator")
+WA:Bind("WorldEntity", "HoverBob", { amplitude = 0.6 })
+-- Each WorldEntity replica's BoundInstance gets a HoverBob applied;
+-- replica.Maid carries the Cancel so picking up the coin (server-side Despawn)
+-- stops the hover automatically.
+```
+
+**Gotchas:**
+
+- **Idempotent `.Spawn`** — re-spawn warns and returns the existing replica rather than throwing or stacking replicas. Useful for "ensure this instance has a replica" flows, but means you can't silently re-template by calling Spawn again. Despawn first if you need fresh `Data`.
+- **`instance.Destroying` auto-despawn** — if you Destroy the bound model in workspace, the replica is auto-destroyed via the connection inside `.Spawn`. You generally do NOT need to call `.Despawn` explicitly unless the instance lives on (e.g. you parented it to nil but kept it alive).
+- **`TOKEN` is module-private + typed `any`** — declared once in `:Initialize` to dodge the "duplicate `Replica.Token` throws" gotcha (§ 2.2). Don't move the declaration to module top-level — it would fire on module require, before `GameService` is ready.
+- **`Tags.Kind` is the discriminator** — clients should consume via `replica.Tags.Kind` to switch on entity type. Using one token + tags is cheaper than one-token-per-kind (each token is a globally-unique server-lifetime registration).
+- **Bridge handlers calling `.Spawn`/`.Update`** must apply the per-player mutex pattern (architecture.md § Critical Bans) — `Replica.New` / `:Set` do not yield, but the surrounding business logic (DataService.Set, ProfileStore saves) often does. Wrap bridge bodies in `task.spawn`.
+- **No per-player entity cleanup today** — the `Players.PlayerRemoving` hook is wired as a forward-compatible placeholder. If you add per-player WorldEntity variants (entities keyed by player), sweep them in that handler.
+
+See also: § 2.2 Mad Studio Replica — Server, § 9.5 ReplicaController, § 9.9 WorldAnimator, architecture.md § How to add a new handler.
 
 ---
 

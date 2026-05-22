@@ -30,6 +30,14 @@ Task-oriented quick-find. Path-mapping detail (local ↔ Studio) lives in the ne
 | Networking (Bridges registry)     | `src/Shared/Shared/Bridges.luau`                                                                |
 | Type definitions                  | `src/Shared/Shared/Types.luau`                                                                  |
 | Data layer (server)               | `src/ServerStorage/ServerUtilities/DataService.luau`                                            |
+| Sound playback (client)           | `src/Client/Client/Controllers/SoundController/` — `init.luau` + `Presets.luau` + `Layered.luau` + `Counting.luau` |
+| Player state machine (client)     | `src/Client/Client/Controllers/PlayerStateController.luau`                                     |
+| Player state types (shared)       | `src/Shared/Utility/PlayerState.luau`                                                          |
+| World entity replicas (server)    | `src/Server/Server/Modules/WorldEntityHandler.luau`                                            |
+| Purchase effects (client)         | `src/Client/Client/Controllers/PurchaseEffectsController.luau`                                 |
+| Loading screen (client)           | `src/Client/Client/Controllers/LoadingScreenController.luau`                                   |
+| UIAnimator presets (client)       | `src/Client/Client/Controllers/UIAnimator/Presets/*.luau`                                      |
+| WorldAnimator presets (client)    | `src/Client/Client/Controllers/WorldAnimator/Presets/*.luau`                                   |
 | Studio asset snapshots (cache)    | `filestructure/*.md` — verify against MCP before acting                                         |
 | Vendored libraries (READ-ONLY)    | `Packages/`, `src/Server/Server/Packages/`, `src/Client/Client/Packages/`, `Replica*`           |
 | Agent definitions (domain routing)| `.claude/agents/*.md`                                                                           |
@@ -178,7 +186,16 @@ local ProductConfig = require(game.ReplicatedStorage.DataModules.ProductConfig)
 -- Client packages (from a Client controller/module context)
 local UIAnimator    = require(script.Parent.Parent.Packages.UIAnimator)     -- DEFAULT for all UI transitions
 local ReplicaClient = require(game.ReplicatedStorage.ReplicaClient)          -- Mad Studio Replica client
+
+-- Project Knit controllers / shared types (fetch via Knit.GetController in KnitStart, not directly required)
+local SoundController        = Knit.GetController("SoundController")          -- Play("UI.Hover"), pooling + categories
+local PlayerStateController  = Knit.GetController("PlayerStateController")    -- :Set / :IsAllowed gate
+local UIAnimatorCtrl         = Knit.GetController("UIAnimator")               -- preset library (Notify, BindNumberLabel, ...)
+local WorldAnimator          = Knit.GetController("WorldAnimator")            -- world preset library (HoverBob, SpringGrow, ...)
+local PlayerState            = require(game.ReplicatedStorage.Utility.PlayerState)  -- shared PlayerState type definitions
 ```
+
+Knit controllers (`SoundController`, `PlayerStateController`, the project's `UIAnimator` Knit controller, `WorldAnimator`) are fetched via `Knit.GetController("Name")` from inside another controller's `KnitStart` — never via `require(...)`. The wally `UIAnimator` package (Twinkle, vendored at `src/Client/Client/Packages/UIAnimator/`) is distinct from the project-level `UIAnimator` Knit controller at `src/Client/Client/Controllers/UIAnimator/` which adds the preset library + `Notify` / `BindNumberLabel*` helpers on top.
 
 ---
 
@@ -215,6 +232,71 @@ local ReplicaClient = require(game.ReplicatedStorage.ReplicaClient)          -- 
 - **Per-player table cleanup.** Every per-player table (keyed by `UserId`) MUST have a `Players.PlayerRemoving` cleanup or it's a memory leak.
 - **Capture state into locals BEFORE `task.delay` callbacks.** Module/table state may be nil by the time the delay fires.
 - **Never use `local X = X or default`** where X should come from a config module — it reads an undefined global (always nil). Use `ConfigModule.Field or default` instead.
+- **Raw `tostring(n)` for client display is forbidden.** All client-visible numeric output must pass through `Format.Suffix` (default) or `Format.Commas` — see § Client-visible numbers below.
+
+---
+
+## Client-visible numbers
+
+All client-visible numeric output — currency, scores, counts, balances, leaderboards,
+popups, anything a player reads — MUST be passed through `Format.Suffix` (default)
+or `Format.Commas`. Raw `tostring(n)` for client display is forbidden.
+
+```lua
+local Format = require(game.ReplicatedStorage.Utility.Format)
+
+-- Default form  → "1.5M", "40K", "139B"
+Format.Suffix(1500000)       -- "1.5M"
+Format.Suffix(40000)         -- "40K"
+
+-- Comma form    → "1,500,000"
+Format.Commas(1500000)       -- "1,500,000"
+
+-- Convenience wrapper (mode defaults to "suffix")
+Format.Number(1500000)               -- "1.5M"
+Format.Number(1500000, "commas")     -- "1,500,000"
+```
+
+See `src/Shared/Utility/Format.luau` and `api-reference.md § Project — Format`.
+
+**Animated/changing numbers (preferred path for any label whose value updates over time)** — bind the label to a value source via the project `UIAnimator` Knit controller. Every binding springs the displayed number and pipes it through `Format` automatically:
+
+```lua
+local UIAnimator = Knit.GetController("UIAnimator")
+
+-- Pure getter (recomputed each frame the spring ticks):
+UIAnimator:BindNumberLabel(label, function() return localScore end)
+
+-- Local player's replica path (auto-resubscribes via PlayerData):
+UIAnimator:BindPlayerDataNumber(label, { "cash" })
+
+-- Arbitrary world replica + data path (BillboardGui labels driven by WorldEntity etc.):
+UIAnimator:BindReplicaNumber(label, replica, { "points" })
+
+-- All three accept opts = { format = "suffix" | "commas" | function, prefix, suffix, springSpeed, springDamper }
+```
+
+Raw `label.Text = tostring(n)` for changing values is forbidden — it bypasses both `Format` and the spring. See `api-reference.md § Project — UIAnimator` (NumberLabel/PlayerData/Replica preset family).
+
+---
+
+## Visual / Animation Policy
+
+Visuals and animations are **client-first**: the client plays the effect immediately on local input or on replica subscription without waiting for a round-trip. The server is the source of truth; it validates every action and publishes authoritative state via Replica. The client receives that authoritative state and reconciles its visuals (snap, correct, or smooth-blend) if they diverged.
+
+- Never block visual feedback waiting on a server response.
+- Never let a client visual flag drive a server-side rule.
+
+Canonical implementations: `src/Client/Client/Controllers/ReplicaController.luau` (non-PlayerData replica subscriptions) and `WorldAnimator/init.luau` (world animation consumer that calls `ReplicaController:OnReplicaNew`).
+
+### Preset registry
+
+Future agents must reach for an existing preset before authoring bespoke tween/spring code. Both registries hang off Knit controllers — fetch with `Knit.GetController("UIAnimator")` / `Knit.GetController("WorldAnimator")` from a sibling controller's `KnitStart`.
+
+- **UIAnimator presets** (`src/Client/Client/Controllers/UIAnimator/Presets/`): `Confetti`, `ShiningButton`, `RotateOscillate`, `NumberLabel` (Explicit / PlayerData / Replica variants), `Countdown`, `Enlargen`, `Shrink`, `Notification`. Full method signatures: `api-reference.md § Project — UIAnimator`.
+- **WorldAnimator presets** (`src/Client/Client/Controllers/WorldAnimator/Presets/`): `HoverBob`, `SpringGrow`, `SpringShrink`, `SpringVanish`, `SpringMaterialize`, `ExplodeBounce`, `MagnetToPlayer`, `BezierMove`, `LinearSpring`. Full method signatures: `api-reference.md § Project — WorldAnimator`.
+
+If a preset doesn't fit, extend the matching `Presets/` folder rather than rolling raw `TweenService`/`Spring` calls at the call site — keeps motion characteristics consistent across the game.
 
 ---
 
@@ -234,6 +316,72 @@ if mySound then mySound:Play() end
 ```
 
 Never `WaitForChild` at module require time — use `FindFirstChild` and gracefully no-op if missing.
+
+---
+
+## Sound playback
+
+Future agents must play sound via `Knit.GetController("SoundController"):Play("UI.Hover")` (or `"SFX.Coin"`, `"Music.Lobby"`, etc. — dotted-path resolution under `SoundService.SFX` / `.Music` / `.Events`). Direct `Sound:Play()` is forbidden — the controller owns pooling, category volume mixing, name resolution, and the layered/counting presets (`SoundController/Layered.luau`, `SoundController/Counting.luau`, `SoundController/Presets.luau`). See `api-reference.md § Project — SoundController`.
+
+```lua
+local Sound = Knit.GetController("SoundController")
+Sound:Play("UI.Hover")              -- pooled one-shot; no manual cloning
+Sound:Play("SFX.Coin", { volume = 0.6, pitch = 1.1 })
+```
+
+The runtime folder convention (`SoundService.SFX/.Music/.Events`) still applies — `SoundController` is the only consumer that should walk those folders directly.
+
+---
+
+## Notifications
+
+Future agents must surface notifications via the project `UIAnimator` Knit controller — never clone the notification templates manually, never build a bespoke notification frame. Templates live at `PlayerGui.Ui.HUD.Notification.<TemplateName>` and are hidden at boot; the controller clones, animates (entry + exit via the `Notification` preset), and plays the default sound (`SoundService.SFX.UI.Notification`).
+
+```lua
+local UIAnimator = Knit.GetController("UIAnimator")
+UIAnimator:Notify("Reward claimed")           -- default template
+UIAnimator:NotifyError("Not enough cash")     -- error template
+UIAnimator:NotifyTutorial("Hold E to grab")   -- tutorial template
+UIAnimator:NotifySpecial("Boss defeated!")    -- special template
+```
+
+`NotificationClient.Show` / `.Success` / `.Error` / `.ShowTutorial` are kept as thin backwards-compatible wrappers that delegate to these methods — new code should call `UIAnimator:Notify*` directly. See `api-reference.md § Project — UIAnimator` for the full notification preset surface.
+
+---
+
+## Player State
+
+Client-side state machine that gates UI/input across the boilerplate's runtime modes. Future agents must check `PlayerStateController:IsAllowed("frame", frameName)` (or `"input"`, `"hud"`, etc.) before opening UI or accepting input — never read or mutate `state` ad-hoc on the local player.
+
+Built-in states: `Idle`, `InMenu`, `InGame`, `InCutscene`, `Loading`. Register additional states via `:Register(def)` where `def` describes which surfaces are allowed in that state. Type definitions live in `src/Shared/Utility/PlayerState.luau` (shared so server-driven transitions can use the same identifiers).
+
+```lua
+local PS = Knit.GetController("PlayerStateController")
+
+-- Transition (caller is responsible for the legality of the transition)
+PS:Set("InGame")
+
+-- Gate before opening any frame
+if PS:IsAllowed("frame", "Shop") then
+    -- open the Shop frame
+end
+
+-- Custom state
+PS:Register({
+    name = "Spectating",
+    allowed = { frame = { "Spectator" }, input = { "camera" } },
+})
+```
+
+See `api-reference.md § Project — PlayerStateController`.
+
+---
+
+## Mobile force-landscape
+
+The project `UIAnimator` Knit controller (`src/Client/Client/Controllers/UIAnimator/init.luau`) detects mobile at `KnitStart` (`UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled and not UserInputService.GamepadEnabled`) and, after a 1-second settle, forces the device to `Enum.ScreenOrientation.LandscapeRight`. This applies to every game built on this framework — there is no per-game opt-in.
+
+**Opt out**: edit `UIAnimator/init.luau` and remove (or guard) the orientation block in `:KnitStart`. Don't try to override the orientation from a sibling controller — `UIAnimator`'s `KnitStart` writes after a `task.wait(1)` and will clobber your value. Document the opt-out per fork in CLAUDE.md § Game Overview if landscape is undesired.
 
 ---
 
@@ -361,6 +509,32 @@ end)
 ```
 
 Rule of thumb: if the function body is one statement, never start it with `;`. The ambiguous-syntax workaround belongs at outer scope, not inside a single-statement callback.
+
+### Luau "Expected identifier when parsing expression, got ']'" — nested block comments
+
+Luau block comments (`--[[ ... ]]`) **do not nest**. The first `]]` (or `--]]`) closes the outer block — any subsequent `]]` becomes orphan code and the parser errors at it. Cascades into `Requested module experienced an error while loading` → Knit boot failure. `argon sourcemap` does not detect it.
+
+```luau
+-- BREAKS — outer `--[[` (line 1) is closed by the FIRST `--]]` (line 4).
+-- The `]]` on line 5 is orphan → parse error.
+--[[
+    Example:
+    --[[ HoverBob = function(...) ... end, --]]
+]]
+```
+
+**Fix** — use the long-form bracket count (`--[==[ ... ]==]`) on the outer comment. Any text containing `--[[` or `]]` becomes safe content inside it:
+
+```luau
+--[==[
+    Example:
+    --[[ HoverBob = function(...) ... end, --]]
+]==]
+```
+
+Use `=` count as needed (`--[===[ ... ]===]` etc.) if the inner content also contains `]==]`. Most docstrings only need one level beyond default.
+
+This bites hardest when authoring docstrings that embed a code example using block comments — the embedded example's `--]]` closes the outer docstring. The fix is mechanical; prefer long-form for any docstring that includes block-comment markers in its example code.
 
 ---
 

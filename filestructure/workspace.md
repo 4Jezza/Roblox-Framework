@@ -1,24 +1,18 @@
 # Workspace
 
-**Last refreshed:** NEVER — populate on first session with Studio connected.
+**Last refreshed:** 2026-05-22T00:13:27Z
 **Refresh command:** `mcp__Roblox_Studio__search_game_tree(path: "Workspace", max_depth: 6)`
 
 ## Tree
 
-<!--
-Populate from MCP. Format:
-- Two-space-indented bullets
-- `- Name (ClassName)` per line
-- No properties, attributes, or asset IDs
-- Depth cap: 6 levels. Beyond that: `- Name (ClassName) [...N descendants — inspect via MCP]`
-
-Skip the default Roblox-generated children that are never gameplay-relevant
-(`Camera`, `Terrain`) unless a descendant matters. Keep `Baseplate`, `SpawnLocation`,
-and anything custom.
--->
-
 - Workspace (Workspace)
-  <!-- children go here -->
+  - Terrain (Terrain)
+    - 4Jezza's hats (SunRaysEffect)
+  - Baseplate (Part)
+    - Texture (Texture)
+  - SpawnLocation (SpawnLocation)
+    - Decal (Decal)
+  - Camera (Camera)
 
 ---
 

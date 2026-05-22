@@ -43,6 +43,18 @@ local BridgeNet2 = require(game.ReplicatedStorage.Packages.BridgeNet2)
 -- { type: "Success" | "Error" | "Info", message: string, data: any? }
 local Notify = BridgeNet2.ReferenceBridge("Notify")
 
+-- Server notifies recipient that a gift was received
+-- { fromUserId: number, productId: number }
+local GiftReceived = BridgeNet2.ReferenceBridge("GiftReceived")
+
+-- Server triggers confetti effect on a specific client
+-- { amount: number?, spawnPos: any? }
+local EmitConfetti = BridgeNet2.ReferenceBridge("EmitConfetti")
+
+-- Server notifies client of purchase outcome after PromptProductPurchaseFinished
+-- { kind: "Success" | "Failure" }
+local PurchaseEffect = BridgeNet2.ReferenceBridge("PurchaseEffect")
+
 -- ============================================================
 -- CLIENT → SERVER
 -- ============================================================
@@ -55,13 +67,21 @@ local OpenContainer = BridgeNet2.ReferenceBridge("OpenContainer")
 -- { action: string, [string]: any }
 local AdminCommand = BridgeNet2.ReferenceBridge("AdminCommand")
 
+-- Player requests to send a gift to another player
+-- { targetUserId: number, productId: number }
+local GiftPurchase = BridgeNet2.ReferenceBridge("GiftPurchase")
+
 -- ============================================================
 
 return {
 	-- Server → Client
-	Notify          = Notify,
+	Notify           = Notify,
+	GiftReceived     = GiftReceived,
+	EmitConfetti     = EmitConfetti,
+	PurchaseEffect   = PurchaseEffect,
 
 	-- Client → Server
-	OpenContainer   = OpenContainer,
-	AdminCommand    = AdminCommand,
+	OpenContainer    = OpenContainer,
+	AdminCommand     = AdminCommand,
+	GiftPurchase     = GiftPurchase,
 }

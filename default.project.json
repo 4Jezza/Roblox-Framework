@@ -1,124 +1,99 @@
 {
+  "ignoreGlobs": ["**\\_Index\\**\\default.project.json", "**\\_Index\\**\\test.project.json", "**\\_Index\\**\\test-place.project.json", "**\\_Index\\**\\testez-cli\\**", "**\\_Index\\**\\modules\\testez\\**", "**\\_Index\\**\\modules\\lemur\\**", "**\\_Index\\**\\node_modules\\**", "**\\docs\\**", "**\\*.md", "**\\*.png", "**\\*.jpg", "**\\*.jpeg", "**\\*.gif", "**\\*.svg", "**\\*.d.ts", "**\\*.ts", "**\\*.rs", "**\\*.sh", "**\\*.yml", "**\\*.yaml", "**\\*.luacov", "**\\LICENSE", "**\\LICENSE.*", "**\\CHANGELOG.md", "**\\CONTRIBUTING.md", "**\\mkdocs.yml", "**\\package.json", "**\\package-lock.json", "**\\release.js", "**\\Cargo.lock", "**\\Cargo.toml", "**\\build.rs", "**\\.github\\**", "**\\.git\\**", "**\\.editorconfig", "**\\.luacheckrc", "**\\.gitignore", "**\\.gitmodules", "**\\.travis.yml"],
   "name": "BoilerplateGame",
   "syncback": {
-    "ignoreNames": ["Assets", "Rig", "Animate"],
-    "ignoreClasses": [
-      "Humanoid",
-      "HumanoidDescription",
-      "BodyPartDescription",
-      "AccessoryDescription",
-      "FaceControls",
-      "Animator",
-      "BodyColors",
-      "CharacterMesh",
-      "Hat",
-      "Accessory",
-      "Shirt",
-      "Pants",
-      "ShirtGraphic"
-    ]
+    "ignoreClasses": ["Humanoid", "HumanoidDescription", "BodyPartDescription", "AccessoryDescription", "FaceControls", "Animator", "BodyColors", "CharacterMesh", "Hat", "Accessory", "Shirt", "Pants", "ShirtGraphic"],
+    "ignoreNames": ["Assets", "Rig", "Animate"]
   },
-  "ignoreGlobs": [
-    "**/_Index/**/default.project.json",
-    "**/_Index/**/test.project.json",
-    "**/_Index/**/test-place.project.json",
-    "**/_Index/**/testez-cli/**",
-    "**/_Index/**/modules/testez/**",
-    "**/_Index/**/modules/lemur/**",
-    "**/_Index/**/node_modules/**",
-    "**/docs/**",
-    "**/*.md",
-    "**/*.png",
-    "**/*.jpg",
-    "**/*.jpeg",
-    "**/*.gif",
-    "**/*.svg",
-    "**/*.d.ts",
-    "**/*.ts",
-    "**/*.rs",
-    "**/*.sh",
-    "**/*.yml",
-    "**/*.yaml",
-    "**/*.luacov",
-    "**/LICENSE",
-    "**/LICENSE.*",
-    "**/CHANGELOG.md",
-    "**/CONTRIBUTING.md",
-    "**/mkdocs.yml",
-    "**/package.json",
-    "**/package-lock.json",
-    "**/release.js",
-    "**/Cargo.lock",
-    "**/Cargo.toml",
-    "**/build.rs",
-    "**/.github/**",
-    "**/.git/**",
-    "**/.editorconfig",
-    "**/.luacheckrc",
-    "**/.gitignore",
-    "**/.gitmodules",
-    "**/.travis.yml"
-  ],
   "tree": {
     "$className": "DataModel",
     "ReplicatedStorage": {
-      "$ignoreUnknownInstances": true,
+      "$keepUnknowns": true,
       "Assets": {
         "$className": "Folder",
-        "$ignoreUnknownInstances": true
+        "$keepUnknowns": true
       },
-      "DataModules":   { "$path": "src/Shared/DataModules" },
-      "Modules":       { "$path": "src/Shared/Modules" },
-      "Packages":      { "$path": "Packages" },
-      "ReplicaShared": { "$path": "src/Shared/ReplicaShared" },
-      "ReplicaClient": { "$path": "src/Shared/ReplicaClient.luau" },
-      "Shared":        { "$path": "src/Shared/Shared" },
-      "Utility":       { "$path": "src/Shared/Utility" }
+      "DataModules": {
+        "$path": "src/Shared/DataModules"
+      },
+      "Modules": {
+        "$path": "src/Shared/Modules"
+      },
+      "Packages": {
+        "$path": "Packages"
+      },
+      "ReplicaClient": {
+        "$path": "src/Shared/ReplicaClient.luau"
+      },
+      "ReplicaShared": {
+        "$path": "src/Shared/ReplicaShared"
+      },
+      "Shared": {
+        "$path": "src/Shared/Shared"
+      },
+      "Utility": {
+        "$path": "src/Shared/Utility"
+      }
     },
     "ServerScriptService": {
-      "$ignoreUnknownInstances": true,
-      "ReplicaServer": { "$path": "src/Server/ReplicaServer.luau" },
-      "Server":        { "$path": "src/Server/Server" }
+      "$keepUnknowns": true,
+      "ReplicaServer": {
+        "$path": "src/Server/ReplicaServer.luau"
+      },
+      "Server": {
+        "$path": "src/Server/Server"
+      }
     },
     "ServerStorage": {
       "$className": "ServerStorage",
-      "$ignoreUnknownInstances": true,
-      "ServerUtilities": { "$path": "src/ServerStorage/ServerUtilities" }
+      "$keepUnknowns": true,
+      "ServerUtilities": {
+        "$path": "src/ServerStorage/ServerUtilities"
+      }
     },
     "SoundService": {
       "$className": "SoundService",
-      "Events": {
-        "$className": "Folder"
+      "$properties": {
+        "DefaultListenerLocation": "Camera",
+        "RespectFilteringEnabled": true
       },
       "Music": {
         "$className": "Folder"
       },
       "SFX": {
         "$className": "Folder"
-      },
-      "$properties": {
-        "RespectFilteringEnabled": true,
-        "DefaultListenerLocation": "Camera"
       }
     },
     "StarterGui": {
       "$className": "StarterGui",
-      "$ignoreUnknownInstances": true
+      "$keepUnknowns": true,
+      "LoadingScreen": {
+        "$className": "ScreenGui",
+        "$properties": {
+          "DisplayOrder": 100000,
+          "Enabled": false,
+          "ResetOnSpawn": false,
+          "ScreenInsets": "DeviceSafeInsets",
+          "ZIndexBehavior": "Sibling"
+        }
+      }
     },
     "StarterPlayer": {
-      "StarterPlayerScripts": {
-        "$ignoreUnknownInstances": true,
-        "Client": { "$path": "src/Client/Client" }
-      },
       "$properties": {
-        "CharacterWalkSpeed": 16,
         "CameraMaxZoomDistance": 128,
-        "CharacterUseJumpPower": false
+        "CharacterUseJumpPower": false,
+        "CharacterWalkSpeed": 16
+      },
+      "StarterPlayerScripts": {
+        "$keepUnknowns": true,
+        "Client": {
+          "$path": "src/Client/Client"
+        }
       }
     },
     "Workspace": {
       "$className": "Workspace",
-      "$ignoreUnknownInstances": true,
+      "$keepUnknowns": true,
       "$properties": {
         "StreamingEnabled": true
       }
