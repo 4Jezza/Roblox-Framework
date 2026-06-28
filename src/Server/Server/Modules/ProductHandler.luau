@@ -24,6 +24,7 @@ local ReplicatedStorage  = game:GetService("ReplicatedStorage")
 local RunService         = game:GetService("RunService")
 local ServerStorage      = game:GetService("ServerStorage")
 
+local BridgeNet2  = require(ReplicatedStorage.Packages.BridgeNet2)
 local Bridges     = require(ReplicatedStorage.Shared.Bridges)
 local DataService = require(ServerStorage.ServerUtilities.DataService)
 
@@ -247,6 +248,32 @@ function ProductHandler:Initialize()
 					productId  = receiptInfo.ProductId,
 				})
 
+				-- Broadcast the gift to all players for chat display.
+				local buyerName   = player and player.Name or "Unknown"
+				local recpName    = recipient.Name
+				local giftProdId  = receiptInfo.ProductId
+				task.spawn(function()
+					local ok, info = pcall(function()
+						return MarketplaceService:GetProductInfo(giftProdId, Enum.InfoType.Product)
+					end)
+					-- rule_8: warn on every failable lookup so silent failures don't hide bugs.
+					if not ok then
+						warn("[ProductHandler/Gifting] GetProductInfo failed for productId="
+							.. tostring(giftProdId) .. " — using fallback name/price. Error: " .. tostring(info))
+					end
+					local productName = (ok and info) and info.Name or ("Product " .. tostring(giftProdId))
+					local price       = (ok and info) and info.PriceInRobux or 0
+					-- Per api-reference.md § networking: AllPlayers() fan-out fires a single
+					-- batched packet rather than N individual Fire calls (Change 3).
+					Bridges.PurchaseBroadcast:Fire(BridgeNet2.AllPlayers(), {
+						playerName    = buyerName,
+						productName   = productName,
+						priceInRobux  = price,
+						isGift        = true,
+						recipientName = recpName,
+					})
+				end)
+
 				-- Clear the pending intent so a retry doesn't double-grant.
 				buyerPending[receiptInfo.ProductId] = nil
 
@@ -297,14 +324,47 @@ function ProductHandler:Initialize()
 	-- This is independent of ProcessReceipt — it fires on every successful prompt
 	-- regardless of receipt processing, which is what the UI animation needs.
 	-- Per api-reference.md § 1.2: :Fire takes a single table payload.
-	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, _productId, wasPurchased)
-		if not wasPurchased then return end
+	MarketplaceService.PromptProductPurchaseFinished:Connect(function(userId, productId, wasPurchased)
+		if not wasPurchased then
+			-- Clear stale gift intent so a later self-purchase of the same product
+			-- is not accidentally routed as a gift.
+			local pending = pendingGifts[userId]
+			if pending then pending[productId] = nil end
+			return
+		end
 		local player = Players:GetPlayerByUserId(userId)
 		if not player then
 			warn("[ProductHandler] PromptProductPurchaseFinished: player not found for userId=" .. tostring(userId))
 			return
 		end
 		Bridges.PurchaseEffect:Fire(player, { kind = "Success" })
+		-- Broadcast to chat. Skip gift purchases — ProcessReceipt broadcasts those instead.
+		-- At this point pendingGifts[userId][productId] is still populated for gifts
+		-- (ProcessReceipt hasn't run yet), so we use it as the guard.
+		local buyerPending = pendingGifts[userId]
+		if not (buyerPending and buyerPending[productId]) then
+			local broadcastPlayer = player
+			task.spawn(function()
+				local ok, info = pcall(function()
+					return MarketplaceService:GetProductInfo(productId, Enum.InfoType.Product)
+				end)
+				-- rule_8: warn on every failable lookup so silent failures don't hide bugs.
+				if not ok then
+					warn("[ProductHandler] GetProductInfo failed for productId="
+						.. tostring(productId) .. " — using fallback name/price. Error: " .. tostring(info))
+				end
+				local productName = (ok and info) and info.Name or ("Product " .. tostring(productId))
+				local price       = (ok and info) and info.PriceInRobux or 0
+				-- Per api-reference.md § networking: AllPlayers() fan-out fires a single
+				-- batched packet rather than N individual Fire calls (Change 2).
+				Bridges.PurchaseBroadcast:Fire(BridgeNet2.AllPlayers(), {
+					playerName   = broadcastPlayer.Name,
+					productName  = productName,
+					priceInRobux = price,
+					isGift       = false,
+				})
+			end)
+		end
 	end)
 
 	-- Clean up per-player tables when the player leaves.

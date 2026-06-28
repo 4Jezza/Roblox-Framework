@@ -133,8 +133,28 @@ end
 
 function NotificationClient:Initialize()
 	-- Wire server-pushed notifications.
+	-- Capture fields into locals before task.spawn — architecture.md § Critical Bans
+	-- (no yield in bridge handlers; ShowNotification yields via task.wait(duration)).
 	Bridges.Notify:Connect(function(data: { type: string, message: string, duration: number? })
-		NotificationClient.Show(data.message, data.type, nil, data.duration)
+		if not data or type(data) ~= "table" then
+			warn("[NotificationClient] Notify: malformed payload —", data)
+			return
+		end
+		local msg = data.message
+		local dur = data.duration
+		-- Map semantic type (Success/Error/Info) to actual template name.
+		-- Notify payload types are semantic; HUD templates are Notification/Error/etc.
+		local TYPE_TO_TEMPLATE: { [string]: string } = {
+			Success  = "Notification",
+			Error    = "Error",
+			Info     = "Notification",
+			Special  = "SpecialNotification",
+			Tutorial = "Tutorial",
+		}
+		local template = TYPE_TO_TEMPLATE[data.type] or "Notification"
+		task.spawn(function()
+			NotificationClient.Show(msg, template, nil, dur)
+		end)
 	end)
 
 	print("[NotificationClient] Initialized.")

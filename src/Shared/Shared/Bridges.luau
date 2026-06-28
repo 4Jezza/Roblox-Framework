@@ -55,6 +55,10 @@ local EmitConfetti = BridgeNet2.ReferenceBridge("EmitConfetti")
 -- { kind: "Success" | "Failure" }
 local PurchaseEffect = BridgeNet2.ReferenceBridge("PurchaseEffect")
 
+-- Broadcasts a purchase event to all connected players
+-- { playerName: string, productName: string, priceInRobux: number, isGift: boolean, recipientName: string? }
+local PurchaseBroadcast = BridgeNet2.ReferenceBridge("PurchaseBroadcast")
+
 -- ============================================================
 -- CLIENT → SERVER
 -- ============================================================
@@ -75,10 +79,11 @@ local GiftPurchase = BridgeNet2.ReferenceBridge("GiftPurchase")
 
 return {
 	-- Server → Client
-	Notify           = Notify,
-	GiftReceived     = GiftReceived,
-	EmitConfetti     = EmitConfetti,
-	PurchaseEffect   = PurchaseEffect,
+	Notify            = Notify,
+	GiftReceived      = GiftReceived,
+	EmitConfetti      = EmitConfetti,
+	PurchaseEffect    = PurchaseEffect,
+	PurchaseBroadcast = PurchaseBroadcast,
 
 	-- Client → Server
 	OpenContainer    = OpenContainer,

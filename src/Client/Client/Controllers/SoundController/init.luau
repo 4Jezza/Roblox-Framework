@@ -103,6 +103,10 @@ local _pool: { [string]: { [string]: { Sound } } } = {
 	Music = {},
 }
 
+-- Whether the background music cycling loop is active.
+-- Set false via :StopMusicCycle() to stop after the current track ends.
+local _musicCycleActive = false
+
 -- ---------------------------------------------------------------------------
 -- Private helpers
 -- ---------------------------------------------------------------------------
@@ -322,6 +326,16 @@ function SoundController:SetCategoryVolume(category: "SFX" | "Music", value: num
 end
 
 --[[
+	:StopMusicCycle()
+	Stops the background music cycling loop and halts all currently-playing Music sounds.
+	Call this from a pause menu or when transitioning to a different music context.
+]]
+function SoundController:StopMusicCycle()
+	_musicCycleActive = false
+	self:StopAll("Music")
+end
+
+--[[
 	:CountTo(opts)
 	Delegates to Counting.luau. Returns a CountHandle with Cancel / IsPlaying /
 	SetProgress.
@@ -349,7 +363,29 @@ function SoundController:KnitStart()
 	if not musicFolder then
 		warn("[SoundController] SoundService.Music folder missing — "
 			.. "Music plays will no-op")
+		return
 	end
+
+	-- Collect Sound children and start the cycling loop.
+	local tracks = {}
+	for _, child in ipairs(musicFolder:GetChildren()) do
+		if child:IsA("Sound") then table.insert(tracks, child.Name) end
+	end
+	if #tracks == 0 then
+		warn("[SoundController] SoundService.Music has no Sound children — music cycle skipped")
+		return
+	end
+	_musicCycleActive = true
+	local currentIndex = 0
+	local function playNextTrack()
+		if not _musicCycleActive then return end
+		currentIndex = (currentIndex % #tracks) + 1
+		-- Force looped=false so each track fires Ended naturally and the cycle advances.
+		-- Tracks with Looped=true in Studio would otherwise stall the cycle on the first track.
+		local handle = self:Play(tracks[currentIndex], { looped = false })
+		handle.OnEnded = playNextTrack
+	end
+	playNextTrack()
 end
 
 return SoundController
